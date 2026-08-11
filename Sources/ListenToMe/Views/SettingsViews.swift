@@ -87,11 +87,21 @@ struct SettingsContentView: View {
             isSecure: true,
             onSubmit: saveAPIKey
           )
+
+          if settings.hasAPIKey, apiKey.isEmpty, keyStatus.isEmpty {
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 16))
+              .foregroundStyle(AppTheme.success)
+              .accessibilityLabel("API key saved")
+              .transition(.scale.combined(with: .opacity))
+          }
+
           Button("Save Key") {
             saveAPIKey()
           }
           .buttonStyle(RecordActionButtonStyle())
         }
+        .animation(.easeOut(duration: 0.18), value: settings.hasAPIKey)
 
         if !keyStatus.isEmpty {
           Text(keyStatus)
@@ -124,7 +134,7 @@ struct SettingsContentView: View {
         HotkeyRecorderView(settings: settings)
 
         Text(
-          "One shortcut does it all. Esc cancels. If you change apps while finishing, the transcript is copied instead of pasted into the wrong place."
+          "One shortcut does it all. After Space-lock, press again (or Esc) to finish and paste. Esc cancels only before you lock. If you change apps while finishing, the transcript is copied instead of pasted into the wrong place."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)

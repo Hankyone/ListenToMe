@@ -1,3 +1,5 @@
-## ListenToMe 0.3.31
+## ListenToMe 0.3.32
 
-- Mic privacy light only while dictating — warm graph stays prepared but the engine is stopped when idle, so hotkey is still a fast start
+- Fix Space-lock dead-end: press the shortcut again (or Esc) to finish and paste
+- Centered top navigation; API key shows a green check when saved
+- Writing guidance flashes “Saved” as you edit (it already auto-saves)

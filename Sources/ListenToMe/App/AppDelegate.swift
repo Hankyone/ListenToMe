@@ -93,7 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self?.hotkeyReleased()
     }
     hotkey.onCancel = { [weak self] in
-      self?.model.recording.cancelDictation()
+      guard let self else { return }
+      // After Space-lock, Esc means "I'm done" (paste), not discard.
+      if self.model.recording.isHandsFreeLocked,
+        self.model.recording.phase == .recording
+      {
+        Task { await self.model.recording.stop() }
+      } else {
+        self.model.recording.cancelDictation()
+      }
     }
     hotkey.onLock = { [weak self] in
       self?.lockDictationFromHold()
@@ -182,9 +190,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         await model.recording.start()
       }
     case .recording:
-      // Second press always finishes, whether hold, tap-toggle, or Space-locked.
+      // Second press always finishes — including after Space-lock.
       pressStartedRecording = false
       hotkey.setSpaceLockArmed(false)
+      if model.settings.showRecordingOverlay {
+        overlayController?.update(for: .finishing, enabled: true)
+      }
       Task {
         await model.recording.stop()
       }
@@ -265,7 +276,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       || model.recording.phase == .recording
     {
       hotkey.setSpaceLockArmed(false)
+      hotkey.noteHandsFreeLocked()
       model.recording.setHandsFreeLocked(true)
+      // This press is done — release must not PTT-stop, and the next press
+      // must be free to finish.
+      pressStartedRecording = false
+      pressAt = nil
+      // Keep the plate up with clear "how to finish" copy.
+      if model.settings.showRecordingOverlay {
+        overlayController?.update(for: .recording, enabled: true)
+      }
     }
   }
 

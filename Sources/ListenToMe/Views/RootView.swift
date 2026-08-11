@@ -26,28 +26,32 @@ struct RootView: View {
   }
 
   private var topNavigation: some View {
-    HStack(spacing: 4) {
-      SpeechToCursorMark()
-        .frame(width: 40, height: 22)
-        .padding(.trailing, 6)
+    ZStack {
+      HStack(spacing: 4) {
+        SpeechToCursorMark()
+          .frame(width: 36, height: 20)
+          .padding(.trailing, 2)
 
-      ForEach(AppSection.allCases) { section in
-        TopNavTab(
-          section: section,
-          isSelected: model.selectedSection == section
-        ) {
-          model.selectedSection = section
+        ForEach(AppSection.allCases) { section in
+          TopNavTab(
+            section: section,
+            isSelected: model.selectedSection == section
+          ) {
+            model.selectedSection = section
+          }
         }
       }
 
-      Spacer(minLength: 8)
-
-      Text(statusCaption)
-        .font(.system(size: 11))
-        .foregroundStyle(
-          recording.phase.isRecording ? AppTheme.accent : AppTheme.faintText
-        )
-        .contentTransition(.opacity)
+      HStack {
+        Spacer(minLength: 0)
+        Text(statusCaption)
+          .font(.system(size: 11, design: .rounded))
+          .foregroundStyle(
+            recording.phase.isRecording ? AppTheme.accent : AppTheme.faintText
+          )
+          .contentTransition(.opacity)
+          .animation(.easeOut(duration: 0.18), value: statusCaption)
+      }
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
@@ -77,7 +81,8 @@ struct RootView: View {
 
   private var statusCaption: String {
     switch recording.phase {
-    case .recording: "Listening"
+    case .recording:
+      recording.isHandsFreeLocked ? "Locked" : "Listening"
     case .connecting: "Connecting"
     case .finishing: "Finishing"
     case .delivered: "Delivered"

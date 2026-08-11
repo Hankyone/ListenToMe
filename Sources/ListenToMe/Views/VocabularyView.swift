@@ -7,6 +7,9 @@ struct VocabularyView: View {
   @State private var oftenHeardAs = ""
   @State private var validationMessage = ""
   @State private var editingItem: VocabularyItem?
+  @State private var guidanceSavedFlash = false
+  @FocusState private var guidanceFocused: Bool
+  @State private var guidanceSaveTask: Task<Void, Never>?
 
   var body: some View {
     ScrollView {
@@ -42,9 +45,16 @@ struct VocabularyView: View {
     WordsSection(title: "Writing guidance") {
       VStack(alignment: .leading, spacing: 8) {
         HStack {
+          if guidanceSavedFlash {
+            Label("Saved", systemImage: "checkmark.circle.fill")
+              .font(.system(size: 11, weight: .medium))
+              .foregroundStyle(AppTheme.success)
+              .transition(.opacity.combined(with: .move(edge: .trailing)))
+          }
           Spacer()
           Button("Reset to default") {
             settings.resetBasePrompt()
+            flashGuidanceSaved()
           }
           .buttonStyle(QuietButtonStyle())
           .disabled(settings.isUsingDefaultBasePrompt)
@@ -54,15 +64,47 @@ struct VocabularyView: View {
           .frame(minHeight: 100)
           .scrollContentBackground(.hidden)
           .padding(9)
+          .focused($guidanceFocused)
           .background(
             ChamferedPlate(cut: 7)
               .fill(AppTheme.background)
           )
+          .onChange(of: settings.basePrompt) { _, _ in
+            // Persists on every edit via SettingsStore; flash after a pause.
+            scheduleGuidanceSavedFlash()
+          }
+          .onChange(of: guidanceFocused) { _, focused in
+            if !focused {
+              flashGuidanceSaved()
+            }
+          }
         Text(
-          "Sent with every dictation, along with your custom words and the app you are speaking into."
+          "Saves as you type. Sent with every dictation, along with your custom words and the app you are speaking into."
         )
         .font(.system(size: 11))
         .foregroundStyle(AppTheme.faintText)
+      }
+    }
+  }
+
+  private func scheduleGuidanceSavedFlash() {
+    guidanceSaveTask?.cancel()
+    guidanceSaveTask = Task {
+      try? await Task.sleep(nanoseconds: 700_000_000)
+      guard !Task.isCancelled else { return }
+      flashGuidanceSaved()
+    }
+  }
+
+  private func flashGuidanceSaved() {
+    guidanceSaveTask?.cancel()
+    withAnimation(.easeOut(duration: 0.15)) {
+      guidanceSavedFlash = true
+    }
+    Task {
+      try? await Task.sleep(nanoseconds: 1_400_000_000)
+      withAnimation(.easeOut(duration: 0.25)) {
+        guidanceSavedFlash = false
       }
     }
   }

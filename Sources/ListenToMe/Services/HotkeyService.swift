@@ -156,6 +156,8 @@ final class HotkeyService {
 
   fileprivate let sessionTapState = SessionTapState()
   private var runLoopSource: CFRunLoopSource?
+  /// True while Escape/Space session controls are installed (a take is live).
+  private var sessionControlsActive = false
 
   /// True after Space was hit on this hold, even if MainActor hasn't applied it yet.
   var isSpaceLockLatched: Bool { sessionTapState.isLatched }
@@ -197,6 +199,16 @@ final class HotkeyService {
     }
   }
 
+  /// Call when Space locks hands-free so the next primary press can finish
+  /// the take even if Carbon missed a key-up while Space was swallowed.
+  func noteHandsFreeLocked() {
+    comboIsDown = false
+    holdCandidateIsPending = false
+    // Keep modifierKeyIsDown as-is until the real key-up; clearing holdIsActive
+    // lets the release path avoid a duplicate onRelease stop attempt.
+    holdIsActive = false
+  }
+
   /// Arm Space-to-lock for the duration of a push-to-talk hold.
   func setSpaceLockArmed(_ armed: Bool) {
     sessionTapState.setArmed(armed)
@@ -207,6 +219,7 @@ final class HotkeyService {
   }
 
   func setSessionControlsActive(_ active: Bool) {
+    sessionControlsActive = active
     if active {
       installSessionTap()
     } else {
@@ -219,7 +232,14 @@ final class HotkeyService {
     switch HotkeyIdentifier(rawValue: id) {
     case .primary:
       if kind == UInt32(kEventHotKeyPressed) {
-        guard !comboIsDown else { return }
+        if comboIsDown {
+          // Missed key-up (common after Space-lock swallows a key). If a take
+          // is live, treat this as "press again to finish".
+          if sessionControlsActive {
+            onPress?()
+          }
+          return
+        }
         comboIsDown = true
         onPress?()
       } else if kind == UInt32(kEventHotKeyReleased) {
@@ -361,6 +381,15 @@ final class HotkeyService {
 
     if isPress {
       modifierKeyIsDown = true
+      // While a take is already live (tap-toggle or Space-locked), a tap of
+      // the modifier must finish immediately — the 200ms hold confirm made
+      // "press again to finish" feel like a dead key.
+      if sessionControlsActive {
+        holdCandidateIsPending = false
+        holdIsActive = true
+        onPress?()
+        return
+      }
       holdCandidateIsPending = true
       holdCandidateGeneration += 1
       let generation = holdCandidateGeneration

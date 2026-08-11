@@ -128,7 +128,7 @@ struct RecordingOverlayView: View {
     switch coordinator.phase {
     case .recording, .connecting:
       if coordinator.isHandsFreeLocked {
-        return "locked · esc"
+        return "press again · esc finishes"
       }
       if settings.spaceLocksHandsFree, settings.holdIsPushToTalk {
         return "space locks · esc"
