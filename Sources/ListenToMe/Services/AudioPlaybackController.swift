@@ -50,14 +50,16 @@ final class AudioPlaybackController: NSObject, ObservableObject, AVAudioPlayerDe
     currentTime = 0
   }
 
-  func audioPlayerDidFinishPlaying(
+  nonisolated func audioPlayerDidFinishPlaying(
     _ player: AVAudioPlayer,
     successfully flag: Bool
   ) {
-    isPlaying = false
-    currentTime = 0
-    timer?.invalidate()
-    timer = nil
+    Task { @MainActor in
+      self.isPlaying = false
+      self.currentTime = 0
+      self.timer?.invalidate()
+      self.timer = nil
+    }
   }
 
   private func startTimer() {
