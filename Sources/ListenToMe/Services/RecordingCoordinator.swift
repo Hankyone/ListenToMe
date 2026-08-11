@@ -68,8 +68,9 @@ final class RecordingCoordinator: ObservableObject {
   func start() async {
     guard !phase.isBusy else { return }
 
-    // Hotkey path must feel instant (Handy/VoiceInk): overlay + mic first,
-    // never await permission sheets / Settings / websocket before capture.
+    // Paint live UI first and yield MainActor so the timer/waveform can run.
+    // Never block the main thread on AVAudioEngine (that froze elapsed at 0:00
+    // until it jumped to 0:07).
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -79,9 +80,10 @@ final class RecordingCoordinator: ObservableObject {
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
     targetApplication = captureTargetApplication()
-    phase = .connecting
     startedAt = Date()
+    phase = .recording
     startElapsedTimer()
+    await Task.yield()
 
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
@@ -114,7 +116,6 @@ final class RecordingCoordinator: ObservableObject {
       }
     }
 
-    // Instant check only — never poll/open Settings on the hotkey path.
     if !permissions.accessibilityGranted {
       permissions.openAccessibilitySettings()
       fail(
@@ -127,15 +128,12 @@ final class RecordingCoordinator: ObservableObject {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
 
-      // Mic before network. Phase flips to recording as soon as capture is live.
       if usesBatchTranscription {
-        try startBatchCapture(recordingURL: recordingURL)
-        phase = .recording
+        try await startBatchCapture(recordingURL: recordingURL)
       } else {
         try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       }
 
-      // Duck media only after the mic is live — AppleScript must never delay capture.
       Task { @MainActor [weak self] in
         guard let self, self.phase == .recording || self.phase == .finishing else {
           return
@@ -158,10 +156,9 @@ final class RecordingCoordinator: ObservableObject {
   func prepareMicrophone() {
     permissions.refresh()
     guard permissions.microphoneGranted else { return }
-    do {
-      try audioCapture.prepare(deviceUID: settings.preferredMicrophoneUID())
-    } catch {
-      // Warm-up is best-effort — cold start still works.
+    let deviceUID = settings.preferredMicrophoneUID()
+    Task.detached(priority: .userInitiated) { [audioCapture] in
+      try? await audioCapture.prepare(deviceUID: deviceUID)
     }
   }
 
@@ -181,6 +178,11 @@ final class RecordingCoordinator: ObservableObject {
   /// `start()` is still opening the microphone.
   func requestStop() async {
     if phase == .recording {
+      // Capture may still be opening off-main; remember the release.
+      if audioContinuation == nil, audioSendTask == nil {
+        stopRequestedWhileStarting = true
+        return
+      }
       await stop()
     } else if phase == .connecting {
       stopRequestedWhileStarting = true
@@ -213,7 +215,7 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
 
-    if let remainder = audioCapture.stop() {
+    if let remainder = await audioCapture.stop() {
       audioContinuation?.yield(remainder)
     }
     audioContinuation?.finish()
@@ -307,20 +309,9 @@ final class RecordingCoordinator: ObservableObject {
     )
     audioContinuation = streamPair.continuation
 
-    let claimed = await claimStandbyClient(matching: configuration)
-    let client: RealtimeTranscriptionClient
-    let needsConnect: Bool
-    if let claimed {
-      client = claimed
-      needsConnect = false
-    } else {
-      client = RealtimeTranscriptionClient(apiKey: apiKey)
-      needsConnect = true
-    }
-    self.client = client
-
-    // Mic first — speech must never wait on the websocket handshake.
-    try audioCapture.start(
+    // Mic first on the hardware queue — waveform is local and must not wait
+    // on standby claim / websocket work.
+    try await audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { [weak self] data in
@@ -337,7 +328,18 @@ final class RecordingCoordinator: ObservableObject {
         }
       }
     )
-    phase = .recording
+
+    let claimed = await claimStandbyClient(matching: configuration)
+    let client: RealtimeTranscriptionClient
+    let needsConnect: Bool
+    if let claimed {
+      client = claimed
+      needsConnect = false
+    } else {
+      client = RealtimeTranscriptionClient(apiKey: apiKey)
+      needsConnect = true
+    }
+    self.client = client
 
     // Warm path: socket already session-ready → stream audio immediately.
     // Cold path: connect in parallel while mic buffers, then flush.
@@ -352,7 +354,6 @@ final class RecordingCoordinator: ObservableObject {
           await client.setEventHandler { [weak self] event in
             self?.handle(event)
           }
-          // Refresh prompt with the target app name — don't block audio.
           Task {
             try? await client.refreshSession(configuration: configuration)
           }
@@ -501,8 +502,8 @@ final class RecordingCoordinator: ObservableObject {
     await parkClientForStandby(realtime)
   }
 
-  private func startBatchCapture(recordingURL: URL) throws {
-    try audioCapture.start(
+  private func startBatchCapture(recordingURL: URL) async throws {
+    try await audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { _ in },
@@ -520,7 +521,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func stopBatchTranscription() async {
-    _ = audioCapture.stop()
+    _ = await audioCapture.stop()
 
     guard let recordingURL else {
       fail("The recording file was missing.")
@@ -609,7 +610,7 @@ final class RecordingCoordinator: ObservableObject {
     elapsedTask = nil
 
     if phase == .recording {
-      if let remainder = audioCapture.stop() {
+      if let remainder = await audioCapture.stop() {
         audioContinuation?.yield(remainder)
       }
       audioContinuation?.finish()
@@ -707,7 +708,6 @@ final class RecordingCoordinator: ObservableObject {
     finishTimeoutTask = nil
     mediaPause.end()
 
-    audioCapture.cancel()
     audioContinuation?.finish()
     audioContinuation = nil
     audioSendTask?.cancel()
@@ -717,6 +717,7 @@ final class RecordingCoordinator: ObservableObject {
     let client = self.client
     self.client = nil
     Task {
+      await audioCapture.cancel()
       await client?.disconnect()
     }
   }

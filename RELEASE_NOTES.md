@@ -1,5 +1,4 @@
-## ListenToMe 0.3.26
+## ListenToMe 0.3.27
 
-- Pre-connect the OpenAI realtime session while idle so hotkey isn’t waiting on TLS + handshake
-- Keep the mic graph warm between takes — waveform should move immediately
-- After each take, re-arm mic + socket for the next one
+- Fix frozen overlay: mic setup no longer blocks the main thread (timer and waveform update immediately)
+- Listening UI starts on hotkey — local waveform is independent of OpenAI

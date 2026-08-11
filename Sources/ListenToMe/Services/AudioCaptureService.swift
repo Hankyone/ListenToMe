@@ -4,10 +4,11 @@ import Foundation
 
 /// Microphone capture with VoiceInk/Handy-style warm-up.
 ///
-/// Cold `AVAudioEngine.start()` regularly costs hundreds of ms (Handy #1283).
-/// We keep the graph warm between takes for 30s so the next hotkey only flips
-/// a flag and opens the recording file — speech is captured immediately.
-final class AudioCaptureService {
+/// All HAL / `AVAudioEngine` work runs on `hardwareQueue` — never on the
+/// main actor. Cold `engine.start()` can take hundreds of ms to seconds; if
+/// that runs on MainActor the overlay timer and waveform freeze (elapsed
+/// jumps 0 → 7s). VoiceInk uses the same off-main audio setup queue.
+final class AudioCaptureService: @unchecked Sendable {
   enum CaptureError: LocalizedError {
     case invalidInputFormat
     case converterUnavailable
@@ -30,6 +31,10 @@ final class AudioCaptureService {
     case recording
   }
 
+  private let hardwareQueue = DispatchQueue(
+    label: "ca.hankyone.ListenToMe.audio",
+    qos: .userInitiated
+  )
   private let lock = NSLock()
   private var engine: AVAudioEngine?
   private var audioFile: AVAudioFile?
@@ -38,7 +43,7 @@ final class AudioCaptureService {
   private var lastLevelUpdate = Date.distantPast
   private var mode: Mode = .idle
   private var warmedDeviceUID: String?
-  private var coolDownTask: Task<Void, Never>?
+  private var coolDownWorkItem: DispatchWorkItem?
 
   private var onPCMChunk: ((Data) -> Void)?
   private var onLevel: ((Float) -> Void)?
@@ -54,7 +59,7 @@ final class AudioCaptureService {
   /// ~40ms of 24 kHz mono Int16 — snappier first bytes to the API.
   private let targetChunkSize = 1_920
   /// Handy keeps the stream open ~30s after a take for back-to-back dictation.
-  private let keepAliveNanoseconds: UInt64 = 30_000_000_000
+  private let keepAliveSeconds: TimeInterval = 30
 
   var isRecording: Bool {
     lock.lock()
@@ -62,11 +67,68 @@ final class AudioCaptureService {
     return mode == .recording
   }
 
-  /// Spin up the HAL graph without writing a take. Safe to call on launch and
-  /// after each stop; no-ops when already warm for the same device.
-  func prepare(deviceUID: String = MicrophoneInput.systemDefaultID) throws {
-    coolDownTask?.cancel()
-    coolDownTask = nil
+  /// Spin up the HAL graph without writing a take.
+  func prepare(deviceUID: String = MicrophoneInput.systemDefaultID) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      hardwareQueue.async {
+        do {
+          try self.prepareSync(deviceUID: deviceUID)
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  func start(
+    recordingURL: URL,
+    deviceUID: String = MicrophoneInput.systemDefaultID,
+    onPCMChunk: @escaping (Data) -> Void,
+    onLevel: @escaping (Float) -> Void,
+    onError: @escaping (Error) -> Void
+  ) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      hardwareQueue.async {
+        do {
+          try self.startSync(
+            recordingURL: recordingURL,
+            deviceUID: deviceUID,
+            onPCMChunk: onPCMChunk,
+            onLevel: onLevel,
+            onError: onError
+          )
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  /// End the take but keep the graph warm briefly for the next hotkey.
+  func stop() async -> Data? {
+    await withCheckedContinuation { continuation in
+      hardwareQueue.async {
+        continuation.resume(returning: self.stopSync())
+      }
+    }
+  }
+
+  func cancel() async {
+    await withCheckedContinuation { continuation in
+      hardwareQueue.async {
+        self.cancelSync()
+        continuation.resume()
+      }
+    }
+  }
+
+  // MARK: - Hardware queue (sync)
+
+  private func prepareSync(deviceUID: String) throws {
+    coolDownWorkItem?.cancel()
+    coolDownWorkItem = nil
 
     lock.lock()
     let alreadyWarm = mode == .warm || mode == .recording
@@ -78,15 +140,15 @@ final class AudioCaptureService {
     try buildEngine(deviceUID: deviceUID, recordingURL: nil)
   }
 
-  func start(
+  private func startSync(
     recordingURL: URL,
-    deviceUID: String = MicrophoneInput.systemDefaultID,
+    deviceUID: String,
     onPCMChunk: @escaping (Data) -> Void,
     onLevel: @escaping (Float) -> Void,
     onError: @escaping (Error) -> Void
   ) throws {
-    coolDownTask?.cancel()
-    coolDownTask = nil
+    coolDownWorkItem?.cancel()
+    coolDownWorkItem = nil
 
     lock.lock()
     if mode == .recording {
@@ -109,8 +171,7 @@ final class AudioCaptureService {
     try buildEngine(deviceUID: deviceUID, recordingURL: recordingURL)
   }
 
-  /// End the take but keep the graph warm briefly for the next hotkey.
-  func stop() -> Data? {
+  private func stopSync() -> Data? {
     lock.lock()
     guard mode == .recording else {
       lock.unlock()
@@ -124,14 +185,13 @@ final class AudioCaptureService {
 
     onPCMChunk = nil
     onLevel = nil
-    // Keep onError while warm in case the tap faults.
     scheduleCoolDown()
     return remainder.isEmpty ? nil : remainder
   }
 
-  func cancel() {
-    coolDownTask?.cancel()
-    coolDownTask = nil
+  private func cancelSync() {
+    coolDownWorkItem?.cancel()
+    coolDownWorkItem = nil
     tearDownEngine()
     onPCMChunk = nil
     onLevel = nil
@@ -139,12 +199,12 @@ final class AudioCaptureService {
   }
 
   private func scheduleCoolDown() {
-    coolDownTask?.cancel()
-    coolDownTask = Task { [weak self] in
-      try? await Task.sleep(nanoseconds: self?.keepAliveNanoseconds ?? 30_000_000_000)
-      guard !Task.isCancelled else { return }
+    coolDownWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in
       self?.coolDownIfStillWarm()
     }
+    coolDownWorkItem = work
+    hardwareQueue.asyncAfter(deadline: .now() + keepAliveSeconds, execute: work)
   }
 
   private func coolDownIfStillWarm() {
@@ -223,7 +283,6 @@ final class AudioCaptureService {
     warmedDeviceUID = deviceUID
     mode = recordingURL == nil ? .warm : .recording
 
-    // Smaller buffer = less hardware latency before the first callback.
     input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) {
       [weak self] buffer, _ in
       guard let self else { return }
@@ -250,7 +309,6 @@ final class AudioCaptureService {
         try file.write(from: buffer)
       }
 
-      // Levels while warm keep the next overlay snappy; PCM only while recording.
       let now = Date()
       if now.timeIntervalSince(lastLevelUpdate) >= 0.05 {
         lastLevelUpdate = now

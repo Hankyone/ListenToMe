@@ -171,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       pressAt = Date()
       // Paint the overlay on the hotkey thread before any async start work.
       if model.settings.showRecordingOverlay {
-        overlayController?.update(for: .connecting, enabled: true)
+        overlayController?.update(for: .recording, enabled: true)
       }
       Task {
         await model.recording.start()
