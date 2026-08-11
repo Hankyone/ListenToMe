@@ -7,12 +7,26 @@ set -euo pipefail
 MIN_MAJOR="${LISTEN_TO_ME_MIN_SWIFT_MAJOR:-6}"
 MIN_MINOR="${LISTEN_TO_ME_MIN_SWIFT_MINOR:-2}"
 
+swift_bin_for_developer_dir() {
+  local developer_dir="$1"
+  local candidate
+  for candidate in \
+    "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift" \
+    "$developer_dir/usr/bin/swift"
+  do
+    if [[ -x "$candidate" ]]; then
+      print -- "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 swift_meets_minimum() {
   local developer_dir="$1"
-  local swift_bin="$developer_dir/usr/bin/swift"
-  [[ -x "$swift_bin" ]] || return 1
+  local swift_bin line major minor
+  swift_bin="$(swift_bin_for_developer_dir "$developer_dir")" || return 1
 
-  local line major minor
   line="$("$swift_bin" --version 2>/dev/null | head -n 1)"
   if [[ "$line" =~ 'Swift version ([0-9]+)\.([0-9]+)' ]]; then
     major="${match[1]}"
@@ -64,7 +78,7 @@ select_developer_dir() {
 DEVELOPER_DIR="$(select_developer_dir)" || {
   print -u2 "No Xcode found with Swift ${MIN_MAJOR}.${MIN_MINOR}+."
   print -u2 "Install Xcode 26+ on this machine, or lower a dependency's swift-tools-version."
-  ls /Applications/Xcode*.app 2>/dev/null || true
+  ls -d /Applications/Xcode*.app 2>/dev/null || true
   exit 1
 }
 
@@ -80,5 +94,5 @@ esac
 
 export DEVELOPER_DIR
 print "Using $DEVELOPER_DIR"
-xcodebuild -version
-swift --version
+DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -version
+DEVELOPER_DIR="$DEVELOPER_DIR" xcrun swift --version

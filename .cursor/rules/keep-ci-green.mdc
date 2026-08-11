@@ -1,0 +1,25 @@
+---
+description: Never push changes that will fail GitHub Actions
+alwaysApply: true
+---
+
+# Keep CI green
+
+The maintainer does not want GitHub Actions failure emails. Treat a red workflow as a bug introduced by the agent.
+
+## Before every `git push` to main or any release tag
+
+1. Run `./Scripts/ci-preflight.sh` and wait for it to pass.
+2. Do not push if preflight fails. Fix locally first.
+3. Do not tag a release until preflight passes on the exact commit you will tag.
+
+## When adding or bumping SPM dependencies
+
+1. Read the dependency’s `Package.swift` `swift-tools-version` **before** committing.
+2. If it needs a newer Swift than CI currently selects, update `Scripts/select-ci-xcode.sh` minimums **in the same commit** as the dependency change.
+3. Never assume the local Mac toolchain matches GitHub’s runner. Local success with a newer Xcode is not enough.
+
+## Workflow edits
+
+- CI and Release must both call `Scripts/select-ci-xcode.sh --system` (or equivalent shared logic). Do not hardcode `/Applications/Xcode.app` alone.
+- Prefer one shared script over duplicated `xcode-select` lines that can drift.

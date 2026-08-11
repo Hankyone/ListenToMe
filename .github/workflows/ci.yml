@@ -16,13 +16,14 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # PermissionFlow requires Swift tools 6.2+ (Xcode 26).
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
-          xcodebuild -version
-          swift --version
+          chmod +x Scripts/*.sh
+          ./Scripts/select-ci-xcode.sh --system
 
       - name: Resolve packages
         run: xcrun swift package resolve
+
+      - name: Guard dependency Swift tools versions
+        run: python3 Scripts/check-dependency-swift-tools.py 6 2
 
       - name: Test
         run: ./Scripts/test.sh
