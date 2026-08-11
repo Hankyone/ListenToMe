@@ -31,11 +31,14 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
   private var readyTimeoutTask: Task<Void, Never>?
   private var eventHandler: (@MainActor (TranscriptionClientEvent) -> Void)?
   private var readyContinuation: CheckedContinuation<Void, Error>?
+  private var sessionReady = false
   private let apiKey: String
 
   init(apiKey: String) {
     self.apiKey = apiKey
   }
+
+  var isSessionReady: Bool { sessionReady && socket != nil }
 
   func connect(
     configuration: TranscriptionConfiguration,
@@ -45,6 +48,9 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
       throw ClientError.invalidURL
     }
 
+    // Replace any previous socket.
+    await tearDownSocket(emittingCancellation: false)
+
     var request = URLRequest(url: url)
     request.timeoutInterval = 15
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -52,6 +58,7 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
     let socket = URLSession.shared.webSocketTask(with: request)
     self.socket = socket
     self.eventHandler = eventHandler
+    self.sessionReady = false
     socket.resume()
 
     receiveTask = Task { [weak self] in
@@ -59,7 +66,6 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
     }
 
     let event = Self.sessionUpdateEvent(configuration: configuration)
-
     try await send(event)
 
     try await withCheckedThrowingContinuation {
@@ -71,6 +77,27 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
         await self?.resolveReady(with: .failure(ClientError.connectionTimedOut))
       }
     }
+  }
+
+  /// Swap the live event sink without tearing down the warm socket.
+  func setEventHandler(
+    _ eventHandler: (@MainActor (TranscriptionClientEvent) -> Void)?
+  ) {
+    self.eventHandler = eventHandler
+  }
+
+  /// Update prompt/languages/etc. on an already-ready session (no TLS redo).
+  func refreshSession(configuration: TranscriptionConfiguration) async throws {
+    guard sessionReady, socket != nil else {
+      throw ClientError.notConnected
+    }
+    try await send(Self.sessionUpdateEvent(configuration: configuration))
+  }
+
+  /// Drop any residual audio between takes so the next hotkey starts clean.
+  func clearInputBuffer() async throws {
+    guard sessionReady, socket != nil else { return }
+    try await send(["type": "input_audio_buffer.clear"])
   }
 
   static func sessionUpdateEvent(
@@ -114,6 +141,9 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
   private func resolveReady(with result: Result<Void, Error>) {
     readyTimeoutTask?.cancel()
     readyTimeoutTask = nil
+    if case .success = result {
+      sessionReady = true
+    }
     guard let continuation = readyContinuation else { return }
     readyContinuation = nil
     continuation.resume(with: result)
@@ -134,12 +164,26 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
   }
 
   func disconnect() async {
-    resolveReady(with: .failure(CancellationError()))
+    await tearDownSocket(emittingCancellation: true)
+  }
+
+  private func tearDownSocket(emittingCancellation: Bool) async {
+    if emittingCancellation {
+      resolveReady(with: .failure(CancellationError()))
+    } else {
+      readyTimeoutTask?.cancel()
+      readyTimeoutTask = nil
+      if let continuation = readyContinuation {
+        readyContinuation = nil
+        continuation.resume(throwing: CancellationError())
+      }
+    }
     receiveTask?.cancel()
     receiveTask = nil
     socket?.cancel(with: .normalClosure, reason: nil)
     socket = nil
     eventHandler = nil
+    sessionReady = false
   }
 
   private func send(_ event: [String: Any]) async throws {
@@ -179,6 +223,7 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
         await handle(type: type, event: event)
       } catch {
         guard !Task.isCancelled else { return }
+        sessionReady = false
         let message = Self.userFacingMessage(for: error)
         resolveReady(
           with: .failure(ClientError.serverRejected(message))
@@ -242,7 +287,6 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
       return "The live transcription connection ended before the text was ready."
     }
     let mapped = UserFacingError.message(from: error.localizedDescription)
-    // URLError / CFNetwork strings are rarely useful for dictation failures.
     if mapped.localizedCaseInsensitiveContains("NSURLError")
       || mapped.localizedCaseInsensitiveContains("Code=-")
       || mapped.localizedCaseInsensitiveContains("The operation couldn’t be completed")

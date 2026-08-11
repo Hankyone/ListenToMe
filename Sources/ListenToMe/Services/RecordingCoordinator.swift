@@ -29,6 +29,10 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private var client: (any TranscriptionClient)?
+  /// Pre-connected OpenAI realtime socket so hotkey doesn't pay TLS + session.setup.
+  private var standbyClient: RealtimeTranscriptionClient?
+  private var standbyConfiguration: TranscriptionConfiguration?
+  private var standbyTask: Task<Void, Never>?
   private var audioContinuation: AsyncStream<Data>.Continuation?
   private var audioSendTask: Task<Void, Never>?
   private var elapsedTask: Task<Void, Never>?
@@ -128,7 +132,7 @@ final class RecordingCoordinator: ObservableObject {
         try startBatchCapture(recordingURL: recordingURL)
         phase = .recording
       } else {
-        try startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
+        try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       }
 
       // Duck media only after the mic is live — AppleScript must never delay capture.
@@ -159,6 +163,18 @@ final class RecordingCoordinator: ObservableObject {
     } catch {
       // Warm-up is best-effort — cold start still works.
     }
+  }
+
+  /// Pre-open the OpenAI realtime socket while idle (mic warm + WS warm).
+  func prepareRealtimeSession() {
+    guard settings.apiProvider.supportsLiveStreaming else { return }
+    scheduleStandbyConnection()
+  }
+
+  /// Mic + realtime standby — call on launch and after each take.
+  func prepareForNextTake() {
+    prepareMicrophone()
+    prepareRealtimeSession()
   }
 
   /// Stop that is safe to call from the hotkey release handler even while
@@ -282,17 +298,26 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
-  private func startLiveCapture(recordingURL: URL, apiKey: String) throws {
-    let client = RealtimeTranscriptionClient(apiKey: apiKey)
-    self.client = client
+  private func startLiveCapture(recordingURL: URL, apiKey: String) async throws {
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = targetApplication?.name
 
     let streamPair = AsyncStream<Data>.makeStream(
       bufferingPolicy: .unbounded
     )
     audioContinuation = streamPair.continuation
 
-    var configuration = settings.transcriptionConfiguration
-    configuration.targetAppName = targetApplication?.name
+    let claimed = await claimStandbyClient(matching: configuration)
+    let client: RealtimeTranscriptionClient
+    let needsConnect: Bool
+    if let claimed {
+      client = claimed
+      needsConnect = false
+    } else {
+      client = RealtimeTranscriptionClient(apiKey: apiKey)
+      needsConnect = true
+    }
+    self.client = client
 
     // Mic first — speech must never wait on the websocket handshake.
     try audioCapture.start(
@@ -314,13 +339,23 @@ final class RecordingCoordinator: ObservableObject {
     )
     phase = .recording
 
-    // Flush audio to OpenAI as fast as the socket allows — never pace the
-    // backlog (that made release→paste feel seconds late).
+    // Warm path: socket already session-ready → stream audio immediately.
+    // Cold path: connect in parallel while mic buffers, then flush.
     audioSendTask = Task { [weak self] in
       do {
-        try await client.connect(configuration: configuration) {
-          [weak self] event in
-          self?.handle(event)
+        if needsConnect {
+          try await client.connect(configuration: configuration) {
+            [weak self] event in
+            self?.handle(event)
+          }
+        } else {
+          await client.setEventHandler { [weak self] event in
+            self?.handle(event)
+          }
+          // Refresh prompt with the target app name — don't block audio.
+          Task {
+            try? await client.refreshSession(configuration: configuration)
+          }
         }
         for await chunk in streamPair.stream {
           try Task.checkCancellation()
@@ -334,6 +369,136 @@ final class RecordingCoordinator: ObservableObject {
         }
       }
     }
+  }
+
+  private func claimStandbyClient(
+    matching configuration: TranscriptionConfiguration
+  ) async -> RealtimeTranscriptionClient? {
+    guard let standby = standbyClient else { return nil }
+    guard await standby.isSessionReady else {
+      await standby.disconnect()
+      standbyClient = nil
+      standbyConfiguration = nil
+      return nil
+    }
+    // Reuse when core settings match; target app is refreshed via session.update.
+    if let standbyConfiguration,
+      !Self.standbyCompatible(standbyConfiguration, configuration)
+    {
+      await standby.disconnect()
+      standbyClient = nil
+      self.standbyConfiguration = nil
+      return nil
+    }
+    standbyClient = nil
+    self.standbyConfiguration = nil
+    return standby
+  }
+
+  private static func standbyCompatible(
+    _ standby: TranscriptionConfiguration,
+    _ live: TranscriptionConfiguration
+  ) -> Bool {
+    standby.basePrompt == live.basePrompt
+      && standby.vocabulary == live.vocabulary
+      && standby.languages == live.languages
+      && standby.delay == live.delay
+      && standby.micProfile == live.micProfile
+  }
+
+  private func scheduleStandbyConnection() {
+    guard settings.apiProvider.supportsLiveStreaming else { return }
+    standbyTask?.cancel()
+    standbyTask = Task { [weak self] in
+      await self?.refreshStandbyConnection()
+    }
+  }
+
+  private func refreshStandbyConnection() async {
+    guard !Task.isCancelled else { return }
+    guard settings.apiProvider.supportsLiveStreaming else { return }
+    // Don't fight an active take.
+    switch phase {
+    case .connecting, .recording, .finishing:
+      return
+    default:
+      break
+    }
+
+    let apiKey: String
+    do {
+      apiKey = try settings.loadAPIKey()
+    } catch {
+      return
+    }
+    guard !apiKey.isEmpty else { return }
+
+    let configuration = settings.transcriptionConfiguration
+    if let standby = standbyClient,
+      let standbyConfiguration,
+      Self.standbyCompatible(standbyConfiguration, configuration),
+      await standby.isSessionReady
+    {
+      return
+    }
+
+    if let old = standbyClient {
+      await old.disconnect()
+    }
+    standbyClient = nil
+    standbyConfiguration = nil
+
+    let client = RealtimeTranscriptionClient(apiKey: apiKey)
+    do {
+      // Noop handler until a take claims this socket.
+      try await client.connect(configuration: configuration) { _ in }
+      guard !Task.isCancelled else {
+        await client.disconnect()
+        return
+      }
+      // Another take may have started while we connected.
+      switch phase {
+      case .connecting, .recording, .finishing:
+        await client.disconnect()
+        return
+      default:
+        break
+      }
+      standbyClient = client
+      standbyConfiguration = configuration
+    } catch {
+      standbyClient = nil
+      standbyConfiguration = nil
+    }
+  }
+
+  private func parkClientForStandby(_ client: RealtimeTranscriptionClient) async {
+    do {
+      try await client.clearInputBuffer()
+      await client.setEventHandler(nil)
+      let configuration = settings.transcriptionConfiguration
+      standbyClient = client
+      standbyConfiguration = configuration
+    } catch {
+      await client.disconnect()
+      scheduleStandbyConnection()
+    }
+  }
+
+  private func recycleOrDropClient() async {
+    audioSendTask?.cancel()
+    audioSendTask = nil
+    audioContinuation?.finish()
+    audioContinuation = nil
+
+    let active = client
+    client = nil
+    guard let realtime = active as? RealtimeTranscriptionClient else {
+      await active?.disconnect()
+      scheduleStandbyConnection()
+      return
+    }
+    await parkClientForStandby(realtime)
   }
 
   private func startBatchCapture(recordingURL: URL) throws {
@@ -456,14 +621,13 @@ final class RecordingCoordinator: ObservableObject {
     let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !finalText.isEmpty, let recordingURL else {
       // Tap with no speech is normal — don't alarm.
-      await cleanUpConnection()
+      await recycleOrDropClient()
       discardCurrentRecording()
       abandonQuietly()
       return
     }
 
-    await client?.disconnect()
-    client = nil
+    await recycleOrDropClient()
 
     var outcome = await delivery.deliver(finalText, to: targetApplication)
     if outcome == .copiedNoAccessibility {
@@ -497,11 +661,13 @@ final class RecordingCoordinator: ObservableObject {
         "Transcript is on the clipboard, but paste access is off. Enable ListenToMe under Accessibility, quit and reopen this app, then paste with ⌘V or dictate again."
       phase = .failed
       resetRecordingReferences()
+      prepareForNextTake()
       return
     }
 
     phase = .delivered(outcome)
     resetRecordingReferences()
+    prepareForNextTake()
 
     Task { [weak self] in
       try? await Task.sleep(nanoseconds: 1_200_000_000)
@@ -519,6 +685,7 @@ final class RecordingCoordinator: ObservableObject {
     phase = .failed
     teardownSession()
     resetRecordingReferences()
+    prepareForNextTake()
   }
 
   /// End a take with nothing to deliver — no banner, no "Dictation stopped".
@@ -530,6 +697,7 @@ final class RecordingCoordinator: ObservableObject {
     phase = .idle
     teardownSession()
     resetRecordingReferences()
+    prepareForNextTake()
   }
 
   private func teardownSession() {

@@ -71,16 +71,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     configureHotkey()
 
-    // Warm the mic graph (VoiceInk prepare / Handy keep-alive). Soft-prompt
-    // Accessibility off the hotkey path so paste is ready without start lag.
+    // Warm mic + OpenAI realtime while idle so hotkey isn't cold.
     Task { @MainActor [weak self] in
-      try? await Task.sleep(nanoseconds: 500_000_000)
+      try? await Task.sleep(nanoseconds: 400_000_000)
       guard let self else { return }
       self.model.permissions.refresh()
       if !self.model.permissions.accessibilityGranted {
         _ = await self.model.permissions.ensureAccessibilityForPaste(promptIfNeeded: true)
       }
-      self.model.recording.prepareMicrophone()
+      self.model.recording.prepareForNextTake()
     }
   }
 
@@ -114,6 +113,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self?.model.recording.prepareMicrophone()
       }
       .store(in: &subscriptions)
+
+    // Re-warm the realtime session when dictation settings that affect
+    // session.update change.
+    Publishers.MergeMany(
+      model.settings.$delay.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$micProfile.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$basePrompt.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$languageText.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$apiProvider.map { _ in () }.eraseToAnyPublisher()
+    )
+    .dropFirst()
+    .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
+    .sink { [weak self] in
+      self?.model.recording.prepareRealtimeSession()
+    }
+    .store(in: &subscriptions)
 
     model.settings.$isCapturingHotkey
       .dropFirst()
