@@ -31,21 +31,25 @@ private let hotkeyEventCallback: EventHandlerUPP = { _, event, userData in
 /// - A key combo (Carbon hotkey): tap toggles, hold speaks until release.
 /// - A lone modifier (Fn, Right Command…): hold speaks until release,
 ///   watched through `flagsChanged` monitors.
-/// While dictation is live, a transient Escape hotkey cancels it.
+/// While dictation is live, Escape cancels and Space locks hands-free
+/// continuation after a push-to-talk hold.
 @MainActor
 final class HotkeyService {
   private enum HotkeyIdentifier: UInt32 {
     case primary = 1
     case cancel = 2
+    case lock = 3
   }
 
   var onPress: (() -> Void)?
   var onRelease: (() -> Void)?
   var onCancel: (() -> Void)?
+  var onLock: (() -> Void)?
 
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
   private var cancelRef: EventHotKeyRef?
+  private var lockRef: EventHotKeyRef?
   private var comboIsDown = false
 
   private var spec: HotkeySpec?
@@ -94,28 +98,54 @@ final class HotkeyService {
     }
   }
 
-  func setCancelKeyActive(_ active: Bool) {
+  func setSessionControlsActive(_ active: Bool) {
     if active {
-      guard cancelRef == nil, installCarbonHandlerIfNeeded() else { return }
-      var hotkeyRef: EventHotKeyRef?
-      let hotkeyID = EventHotKeyID(
-        signature: 0x4C54_4D45,
-        id: HotkeyIdentifier.cancel.rawValue
-      )
-      let status = RegisterEventHotKey(
-        UInt32(kVK_Escape),
-        0,
-        hotkeyID,
-        GetApplicationEventTarget(),
-        0,
-        &hotkeyRef
-      )
-      if status == noErr {
-        cancelRef = hotkeyRef
+      guard installCarbonHandlerIfNeeded() else { return }
+      if cancelRef == nil {
+        var hotkeyRef: EventHotKeyRef?
+        let hotkeyID = EventHotKeyID(
+          signature: 0x4C54_4D45,
+          id: HotkeyIdentifier.cancel.rawValue
+        )
+        let status = RegisterEventHotKey(
+          UInt32(kVK_Escape),
+          0,
+          hotkeyID,
+          GetApplicationEventTarget(),
+          0,
+          &hotkeyRef
+        )
+        if status == noErr {
+          cancelRef = hotkeyRef
+        }
       }
-    } else if let cancelRef {
-      UnregisterEventHotKey(cancelRef)
-      self.cancelRef = nil
+      if lockRef == nil {
+        var hotkeyRef: EventHotKeyRef?
+        let hotkeyID = EventHotKeyID(
+          signature: 0x4C54_4D45,
+          id: HotkeyIdentifier.lock.rawValue
+        )
+        let status = RegisterEventHotKey(
+          UInt32(kVK_Space),
+          0,
+          hotkeyID,
+          GetApplicationEventTarget(),
+          0,
+          &hotkeyRef
+        )
+        if status == noErr {
+          lockRef = hotkeyRef
+        }
+      }
+    } else {
+      if let cancelRef {
+        UnregisterEventHotKey(cancelRef)
+        self.cancelRef = nil
+      }
+      if let lockRef {
+        UnregisterEventHotKey(lockRef)
+        self.lockRef = nil
+      }
     }
   }
 
@@ -134,6 +164,10 @@ final class HotkeyService {
     case .cancel:
       if kind == UInt32(kEventHotKeyPressed) {
         onCancel?()
+      }
+    case .lock:
+      if kind == UInt32(kEventHotKeyPressed) {
+        onLock?()
       }
     case nil:
       break
@@ -278,6 +312,9 @@ final class HotkeyService {
     }
     if let cancelRef {
       UnregisterEventHotKey(cancelRef)
+    }
+    if let lockRef {
+      UnregisterEventHotKey(lockRef)
     }
     if let handlerRef {
       RemoveEventHandler(handlerRef)

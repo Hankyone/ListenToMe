@@ -14,6 +14,10 @@ if ! xcrun --find swift >/dev/null 2>&1; then
     exit 1
 fi
 
+# Optional Developer ID identity. Empty/ad-hoc for local builds.
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+ENTITLEMENTS="$PROJECT_DIR/Resources/ListenToMe.entitlements"
+
 move_aside() {
     local target="$1"
     if [[ ! -e "$target" ]]; then
@@ -27,14 +31,70 @@ move_aside() {
     fi
 }
 
+find_sparkle_framework() {
+    local candidate
+    for candidate in \
+        "$PROJECT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" \
+        "$PROJECT_DIR/.build/out/Products/Release/Sparkle.framework" \
+        "$PROJECT_DIR/.build/release/Sparkle.framework"
+    do
+        if [[ -d "$candidate" ]]; then
+            print "$candidate"
+            return
+        fi
+    done
+    candidate="$(find "$PROJECT_DIR/.build" -path '*/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' -print -quit 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        print "$candidate"
+        return
+    fi
+    return 1
+}
+
+# Per Sparkle sandboxing docs: resign nested helpers without --deep, and never
+# apply the host app's entitlements to Sparkle binaries.
+# https://sparkle-project.org/documentation/sandboxing/
+resign_sparkle_framework() {
+    local sparkle_framework="$1"
+    local identity="$2"
+    local sparkle_b="$sparkle_framework/Versions/B"
+
+    if [[ -d "$sparkle_b/XPCServices/Installer.xpc" ]]; then
+        codesign -f -s "$identity" -o runtime \
+            "$sparkle_b/XPCServices/Installer.xpc"
+    fi
+    if [[ -d "$sparkle_b/XPCServices/Downloader.xpc" ]]; then
+        # Sparkle >= 2.6: preserve Downloader's own entitlements metadata.
+        codesign -f -s "$identity" -o runtime \
+            --preserve-metadata=entitlements \
+            "$sparkle_b/XPCServices/Downloader.xpc"
+    fi
+    if [[ -e "$sparkle_b/Autoupdate" ]]; then
+        codesign -f -s "$identity" -o runtime "$sparkle_b/Autoupdate"
+    fi
+    if [[ -d "$sparkle_b/Updater.app" ]]; then
+        codesign -f -s "$identity" -o runtime "$sparkle_b/Updater.app"
+    fi
+    codesign -f -s "$identity" -o runtime "$sparkle_framework"
+}
+
 cd "$PROJECT_DIR"
-xcrun swift build -c release
+# Universal binary so Sparkle does not emit arm64-only hardwareRequirements.
+xcrun swift build -c release --arch arm64 --arch x86_64
 
 APP_NAME="ListenToMe.app"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME"
 STAGING_DIR="$PROJECT_DIR/.build/$APP_NAME.staging"
 ICONSET_DIR="$PROJECT_DIR/.build/AppIcon.iconset"
+BINARY_PATH="$PROJECT_DIR/.build/release/ListenToMe"
+if [[ ! -x "$BINARY_PATH" ]]; then
+    BINARY_PATH="$PROJECT_DIR/.build/out/Products/Release/ListenToMe"
+fi
+if [[ ! -x "$BINARY_PATH" ]]; then
+    print -u2 "Release binary was not found after swift build."
+    exit 1
+fi
 
 mkdir -p "$DIST_DIR"
 move_aside "$STAGING_DIR"
@@ -42,12 +102,29 @@ move_aside "$ICONSET_DIR"
 
 mkdir -p "$STAGING_DIR/Contents/MacOS"
 mkdir -p "$STAGING_DIR/Contents/Resources"
+mkdir -p "$STAGING_DIR/Contents/Frameworks"
 mkdir -p "$ICONSET_DIR"
 
-cp "$PROJECT_DIR/.build/release/ListenToMe" \
-    "$STAGING_DIR/Contents/MacOS/ListenToMe"
+# ditto preserves Sparkle framework symlinks (required for valid signatures).
+ditto "$BINARY_PATH" "$STAGING_DIR/Contents/MacOS/ListenToMe"
 cp "$PROJECT_DIR/Resources/Info.plist" \
     "$STAGING_DIR/Contents/Info.plist"
+
+SPARKLE_FRAMEWORK="$(find_sparkle_framework)" || {
+    print -u2 "Sparkle.framework was not found under .build. Run swift build first."
+    exit 1
+}
+rm -rf "$STAGING_DIR/Contents/Frameworks/Sparkle.framework"
+ditto "$SPARKLE_FRAMEWORK" "$STAGING_DIR/Contents/Frameworks/Sparkle.framework"
+
+# Non-sandboxed apps do not enable Sparkle XPC services; removing them matches
+# Sparkle's guidance and avoids resigning helpers we never use.
+SPARKLE_B="$STAGING_DIR/Contents/Frameworks/Sparkle.framework/Versions/B"
+rm -rf "$SPARKLE_B/XPCServices" \
+    "$STAGING_DIR/Contents/Frameworks/Sparkle.framework/XPCServices"
+
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+    "$STAGING_DIR/Contents/MacOS/ListenToMe" 2>/dev/null || true
 
 MASTER_ICON="$PROJECT_DIR/Resources/AppIcon-v2.png"
 typeset -A ICON_SIZES
@@ -72,7 +149,22 @@ done
 iconutil -c icns "$ICONSET_DIR" \
     -o "$STAGING_DIR/Contents/Resources/AppIcon.icns"
 
-codesign --force --deep --sign - "$STAGING_DIR" >/dev/null
+if [[ -n "$CODESIGN_IDENTITY" ]]; then
+    resign_sparkle_framework \
+        "$STAGING_DIR/Contents/Frameworks/Sparkle.framework" \
+        "$CODESIGN_IDENTITY"
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --entitlements "$ENTITLEMENTS" \
+        --sign "$CODESIGN_IDENTITY" \
+        "$STAGING_DIR"
+else
+    # Ad-hoc local builds: avoid hardened runtime so Sparkle can load under
+    # library validation. See Sparkle basic setup notes.
+    codesign --force --deep --sign - "$STAGING_DIR" >/dev/null
+fi
 
 move_aside "$APP_DIR"
 mv "$STAGING_DIR" "$APP_DIR"

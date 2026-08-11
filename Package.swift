@@ -10,9 +10,15 @@ let package = Package(
   products: [
     .executable(name: "ListenToMe", targets: ["ListenToMe"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
+  ],
   targets: [
     .executableTarget(
       name: "ListenToMe",
+      dependencies: [
+        .product(name: "Sparkle", package: "Sparkle")
+      ],
       path: "Sources/ListenToMe",
       linkerSettings: [
         .linkedFramework("AppKit"),

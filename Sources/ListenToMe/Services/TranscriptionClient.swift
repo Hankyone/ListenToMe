@@ -2,8 +2,8 @@ import Foundation
 
 enum TranscriptionClientEvent: Equatable, Sendable {
   case sessionReady
-  case delta(String)
-  case completed(String)
+  case delta(itemID: String?, text: String)
+  case completed(itemID: String?, transcript: String)
   case error(String)
 }
 

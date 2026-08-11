@@ -197,12 +197,22 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
 
     case "conversation.item.input_audio_transcription.delta":
       if let delta = event["delta"] as? String {
-        await emit(.delta(delta))
+        await emit(
+          .delta(
+            itemID: event["item_id"] as? String,
+            text: delta
+          )
+        )
       }
 
     case "conversation.item.input_audio_transcription.completed":
       if let transcript = event["transcript"] as? String {
-        await emit(.completed(transcript))
+        await emit(
+          .completed(
+            itemID: event["item_id"] as? String,
+            transcript: transcript
+          )
+        )
       }
 
     case "conversation.item.input_audio_transcription.failed", "error":

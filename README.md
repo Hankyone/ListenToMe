@@ -48,6 +48,61 @@ The app keeps transcript history and recorded audio locally on your Mac.
 ./Scripts/package-app.sh
 ```
 
+Local packages are ad-hoc signed. For a Developer ID build on your Mac:
+
+```sh
+export CODESIGN_IDENTITY="Developer ID Application: Anouar Mansour (K32684A887)"
+./Scripts/package-app.sh
+```
+
+## Updates
+
+Released builds use [Sparkle](https://sparkle-project.org) and check
+[GitHub Releases](https://github.com/Hankyone/ListenToMe/releases) for new
+versions. Use **Check for Updates…** in the menu bar or app menu.
+
+## Releasing
+
+1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in
+   [`Resources/Info.plist`](Resources/Info.plist).
+2. Optionally write short notes in `RELEASE_NOTES.md`.
+3. Commit, tag, and push:
+
+```sh
+git tag v0.3.0
+git push origin main v0.3.0
+```
+
+The tag must match `v` + the short version string. GitHub Actions builds,
+notarizes, uploads `ListenToMe-X.Y.Z.zip` and `appcast.xml`, and publishes the
+release.
+
+### Required repository secrets
+
+| Secret | Value |
+|--------|--------|
+| `MACOS_CERTIFICATE_P12_BASE64` | Base64-encoded Developer ID Application `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | Password for that `.p12` |
+| `APPLE_ID` | Apple ID used for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
+| `APPLE_TEAM_ID` | `K32684A887` |
+| `SPARKLE_PRIVATE_KEY` | Contents of `.secrets/sparkle_eddsa_private.key` |
+
+Export the certificate once:
+
+```sh
+base64 -i DeveloperID.p12 | pbcopy
+```
+
+The Sparkle EdDSA private key lives in `.secrets/` (gitignored). The matching
+public key is already in `Info.plist` as `SUPublicEDKey`.
+
+Local notarized release (same secrets as env vars):
+
+```sh
+./Scripts/release.sh
+```
+
 This is an early MVP. Issues and focused pull requests are welcome.
 
 ## License

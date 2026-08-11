@@ -205,6 +205,13 @@ struct TranscriptionConfiguration: Equatable, Sendable {
       )
     }
 
+    parts.append(
+      """
+      If the speaker says "correction", "scratch that", or "I mean" and then restates something, treat that as an edit: replace the immediately preceding wrong phrase with the restatement. Do not keep the cue words or the discarded phrase in the transcript. Continue with whatever they say next.
+      """
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+
     return parts.joined(separator: "\n\n")
   }
 }

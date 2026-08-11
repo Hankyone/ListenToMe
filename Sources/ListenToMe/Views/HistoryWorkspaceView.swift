@@ -146,7 +146,9 @@ private struct EmptyHistoryView: View {
       .font(.system(size: 18, weight: .semibold))
       .foregroundStyle(AppTheme.primaryText)
       if !isSearching {
-        Text("Press \(hotkeyDisplay), speak, then release or press it again.")
+        Text(
+          "Press \(hotkeyDisplay), speak, then release. Space locks hands-free; press the shortcut again to finish."
+        )
           .font(.system(size: 13))
           .foregroundStyle(AppTheme.secondaryText)
           .multilineTextAlignment(.center)

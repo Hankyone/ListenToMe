@@ -9,6 +9,8 @@ final class RecordingCoordinator: ObservableObject {
   @Published private(set) var elapsed: TimeInterval = 0
   @Published private(set) var levels: [Float] = Array(repeating: 0.04, count: 24)
   @Published private(set) var targetApplication: TargetApplication?
+  /// Set when Space locks a push-to-talk hold into hands-free continuation.
+  @Published private(set) var isHandsFreeLocked = false
   @Published var errorMessage: String?
 
   var onHistoryEntryCreated: ((UUID) -> Void)?
@@ -56,6 +58,7 @@ final class RecordingCoordinator: ObservableObject {
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
+    isHandsFreeLocked = false
     partialTranscript = ""
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
@@ -159,10 +162,15 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
+  func setHandsFreeLocked(_ locked: Bool) {
+    isHandsFreeLocked = locked
+  }
+
   func cancelDictation() {
     guard phase.isBusy else { return }
     stopRequestedWhileStarting = false
     didFinalizeCurrentRecording = true
+    isHandsFreeLocked = false
     teardownSession()
     partialTranscript = ""
     phase = .idle
@@ -218,12 +226,15 @@ final class RecordingCoordinator: ObservableObject {
     case .sessionReady:
       break
 
-    case .delta(let text):
+    case .delta(_, let text):
       guard phase == .recording || phase == .finishing else { return }
+      // Live preview only. The committed `completed` transcript is what gets pasted.
       partialTranscript += text
 
-    case .completed(let transcript):
+    case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
+      // Source of truth for delivery — includes spoken "correction" rewrites.
+      partialTranscript = transcript
       Task {
         await finalize(transcript: transcript)
       }
@@ -278,6 +289,7 @@ final class RecordingCoordinator: ObservableObject {
     onHistoryEntryCreated?(entry.id)
 
     partialTranscript = finalText
+    isHandsFreeLocked = false
     phase = .delivered(outcome)
     resetRecordingReferences()
 
@@ -293,6 +305,7 @@ final class RecordingCoordinator: ObservableObject {
   private func fail(_ message: String) {
     guard phase != .failed else { return }
     errorMessage = message
+    isHandsFreeLocked = false
     phase = .failed
     teardownSession()
     resetRecordingReferences()

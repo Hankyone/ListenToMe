@@ -34,5 +34,12 @@
 	<string>ListenToMe needs microphone access to turn your speech into text.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/Hankyone/ListenToMe/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Q0bx1n9WcNPBK8CZbOQZ75Xet7NyXXnNTDOyzoSwJGg=</string>
 </dict>
 </plist>
+

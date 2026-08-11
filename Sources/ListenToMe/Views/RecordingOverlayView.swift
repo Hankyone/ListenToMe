@@ -121,7 +121,10 @@ struct RecordingOverlayView: View {
   private var trailingHint: String {
     switch coordinator.phase {
     case .recording, .connecting:
-      return "esc cancels"
+      if coordinator.isHandsFreeLocked {
+        return "locked · esc cancels"
+      }
+      return "space locks · esc cancels"
     default:
       return settings.hotkey.display.lowercased()
     }

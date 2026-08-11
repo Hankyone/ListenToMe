@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Sparkle
 import SwiftUI
 
 @MainActor
@@ -7,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let model = AppModel()
 
   private let hotkey = HotkeyService()
+  private let updates = UpdateService()
   private var overlayController: RecordingPanelController?
   private var mainWindowController: NSWindowController?
   private var statusItem: NSStatusItem?
@@ -17,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   /// Holding the key past this long means push-to-talk: release stops.
   /// A quicker tap leaves dictation running until the next tap.
+  /// Space during a live take locks hands-free continuation after release.
   private let pushToTalkThreshold: TimeInterval = 0.5
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     hotkey.onCancel = { [weak self] in
       self?.model.recording.cancelDictation()
     }
+    hotkey.onLock = { [weak self] in
+      self?.lockDictationFromHold()
+    }
     applyHotkey(model.settings.hotkey)
 
     model.settings.$hotkey
@@ -102,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         await model.recording.start()
       }
     case .recording:
+      // Second press always finishes, whether hold, tap-toggle, or Space-locked.
       pressStartedRecording = false
       Task {
         await model.recording.stop()
@@ -117,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       pressAt = nil
     }
     guard pressStartedRecording else { return }
+    // Space locked the take: keep listening after the hotkey comes up.
+    guard !model.recording.isHandsFreeLocked else { return }
 
     let isHoldStyle: Bool
     if model.settings.hotkey.kind == .modifierHold {
@@ -130,6 +139,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     Task {
       await model.recording.requestStop()
+    }
+  }
+
+  private func lockDictationFromHold() {
+    switch model.recording.phase {
+    case .connecting, .recording:
+      model.recording.setHandsFreeLocked(true)
+    default:
+      break
     }
   }
 
@@ -222,6 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       keyEquivalent: ""
     )
     about.target = NSApplication.shared
+
+    let checkForUpdates = applicationMenu.addItem(
+      withTitle: "Check for Updates…",
+      action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+      keyEquivalent: ""
+    )
+    checkForUpdates.target = updates.updaterController
     applicationMenu.addItem(.separator())
 
     let setup = applicationMenu.addItem(
@@ -374,6 +399,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(openSetup),
       to: menu
     )
+    let checkForUpdates = addMenuItem(
+      "Check for Updates…",
+      action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+      to: menu
+    )
+    checkForUpdates.target = updates.updaterController
     addMenuItem(
       "Quit ListenToMe",
       action: #selector(quit),
@@ -430,7 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           enabled: model.settings.showRecordingOverlay
         )
         updateStatusItem(for: phase)
-        hotkey.setCancelKeyActive(
+        hotkey.setSessionControlsActive(
           phase == .recording || phase == .connecting
         )
       }

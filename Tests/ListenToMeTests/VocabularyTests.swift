@@ -31,4 +31,18 @@ final class VocabularyTests: XCTestCase {
     XCTAssertTrue(configuration.prompt.contains("hints only"))
     XCTAssertEqual(configuration.keywords, ["Claude"])
   }
+
+  func testPromptTeachesSpokenCorrectionRewrites() {
+    let configuration = TranscriptionConfiguration(
+      basePrompt: "Keep the speaker's meaning.",
+      vocabulary: [],
+      languages: ["en"],
+      delay: .low
+    )
+
+    XCTAssertTrue(configuration.prompt.contains("correction"))
+    XCTAssertTrue(configuration.prompt.contains("scratch that"))
+    XCTAssertTrue(configuration.prompt.contains("I mean"))
+    XCTAssertTrue(configuration.prompt.contains("Do not keep the cue words"))
+  }
 }

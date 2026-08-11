@@ -91,9 +91,9 @@ struct HotkeyRecorderView: View {
     }
     switch settings.hotkey.kind {
     case .keyCombo:
-      return "Tap to start and stop, or hold it down and speak: release to finish."
+      return "Tap to start and stop, or hold to talk. While holding, Space locks hands-free; press the shortcut again to finish."
     case .modifierHold:
-      return "Hold the key down and speak. Release to finish. Needs Accessibility access."
+      return "Hold to talk, or press Space while holding to keep going hands-free. Press again to finish. Needs Accessibility access."
     }
   }
 
