@@ -1,5 +1,3 @@
-## ListenToMe 0.3.10
+## ListenToMe 0.3.11
 
-- Errors show under the menu bar icon instead of a modal “Dictation stopped” alert
-- Recent panel anchors correctly under the menu bar icon
-- Main window uses an inline notice banner instead of a blocking alert
+- Recent / error panel dismisses when you click away or press Escape
