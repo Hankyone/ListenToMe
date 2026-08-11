@@ -1,4 +1,5 @@
-## ListenToMe 0.3.27
+## ListenToMe 0.3.28
 
-- Fix frozen overlay: mic setup no longer blocks the main thread (timer and waveform update immediately)
-- Listening UI starts on hotkey — local waveform is independent of OpenAI
+- Fix frozen overlay: media pause AppleScript no longer blocks the main thread (was freezing timer + waveform for 5–8s every take)
+- Timer ticks from hotkey via TimelineView; mic warm-up awaited at launch so the first take promotes instantly
+- Standby OpenAI socket and live audio send run off the main actor

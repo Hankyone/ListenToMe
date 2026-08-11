@@ -81,6 +81,13 @@ final class AudioCaptureService: @unchecked Sendable {
     }
   }
 
+  /// Whether the next `start` can promote without calling `engine.start()`.
+  var isWarm: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return mode == .warm && engine != nil
+  }
+
   func start(
     recordingURL: URL,
     deviceUID: String = MicrophoneInput.systemDefaultID,

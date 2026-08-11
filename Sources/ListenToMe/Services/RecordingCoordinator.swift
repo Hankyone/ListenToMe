@@ -9,6 +9,8 @@ final class RecordingCoordinator: ObservableObject {
   @Published private(set) var committedTranscript = ""
   @Published private(set) var tentativeTranscript = ""
   @Published private(set) var elapsed: TimeInterval = 0
+  /// Wall-clock start for the overlay timer (TimelineView reads this).
+  @Published private(set) var listenStartedAt: Date?
   @Published private(set) var levels: [Float] = Array(repeating: 0.04, count: 24)
   @Published private(set) var targetApplication: TargetApplication?
   /// Set when Space locks a push-to-talk hold into hands-free continuation.
@@ -68,9 +70,8 @@ final class RecordingCoordinator: ObservableObject {
   func start() async {
     guard !phase.isBusy else { return }
 
-    // Paint live UI first and yield MainActor so the timer/waveform can run.
-    // Never block the main thread on AVAudioEngine (that froze elapsed at 0:00
-    // until it jumped to 0:07).
+    // Paint live UI first. Never run AppleScript / engine.start / TLS on the
+    // main thread — that froze the overlay at 0:00 with a dead waveform.
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -80,9 +81,13 @@ final class RecordingCoordinator: ObservableObject {
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
     targetApplication = captureTargetApplication()
-    startedAt = Date()
+    let now = Date()
+    startedAt = now
+    listenStartedAt = now
     phase = .recording
     startElapsedTimer()
+    // Duck media off-main immediately (was blocking MainActor 5–8s via AppleScript).
+    mediaPause.begin()
     await Task.yield()
 
     let languageHints = settings.normalizeLanguageTextIfNeeded()
@@ -134,13 +139,6 @@ final class RecordingCoordinator: ObservableObject {
         try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       }
 
-      Task { @MainActor [weak self] in
-        guard let self, self.phase == .recording || self.phase == .finishing else {
-          return
-        }
-        self.mediaPause.begin()
-      }
-
       if stopRequestedWhileStarting {
         stopRequestedWhileStarting = false
         await stop()
@@ -160,6 +158,14 @@ final class RecordingCoordinator: ObservableObject {
     Task.detached(priority: .userInitiated) { [audioCapture] in
       try? await audioCapture.prepare(deviceUID: deviceUID)
     }
+  }
+
+  /// Awaitable warm-up used at launch so the first take can promote instantly.
+  func prepareMicrophoneAndWait() async {
+    permissions.refresh()
+    guard permissions.microphoneGranted else { return }
+    let deviceUID = settings.preferredMicrophoneUID()
+    try? await audioCapture.prepare(deviceUID: deviceUID)
   }
 
   /// Pre-open the OpenAI realtime socket while idle (mic warm + WS warm).
@@ -207,6 +213,10 @@ final class RecordingCoordinator: ObservableObject {
   func stop() async {
     guard phase == .recording else { return }
     phase = .finishing
+    if let startedAt {
+      elapsed = Date().timeIntervalSince(startedAt)
+    }
+    listenStartedAt = nil
     elapsedTask?.cancel()
     elapsedTask = nil
 
@@ -342,8 +352,8 @@ final class RecordingCoordinator: ObservableObject {
     self.client = client
 
     // Warm path: socket already session-ready → stream audio immediately.
-    // Cold path: connect in parallel while mic buffers, then flush.
-    audioSendTask = Task { [weak self] in
+    // Cold path: connect off MainActor while mic already feeds the waveform.
+    audioSendTask = Task.detached(priority: .userInitiated) { [weak self] in
       do {
         if needsConnect {
           try await client.connect(configuration: configuration) {
@@ -354,7 +364,7 @@ final class RecordingCoordinator: ObservableObject {
           await client.setEventHandler { [weak self] event in
             self?.handle(event)
           }
-          Task {
+          Task.detached {
             try? await client.refreshSession(configuration: configuration)
           }
         }
@@ -410,7 +420,8 @@ final class RecordingCoordinator: ObservableObject {
   private func scheduleStandbyConnection() {
     guard settings.apiProvider.supportsLiveStreaming else { return }
     standbyTask?.cancel()
-    standbyTask = Task { [weak self] in
+    // Detached so TLS + session.updated never sit on MainActor behind a hotkey.
+    standbyTask = Task.detached(priority: .utility) { [weak self] in
       await self?.refreshStandbyConnection()
     }
   }
@@ -752,6 +763,8 @@ final class RecordingCoordinator: ObservableObject {
 
   private func startElapsedTimer() {
     elapsedTask?.cancel()
+    // Prefer a RunLoop timer so ticks keep landing even when Swift concurrency
+    // is busy — TimelineView in the overlay is the primary display path.
     elapsedTask = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 100_000_000)
@@ -776,6 +789,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func resetRecordingReferences() {
+    listenStartedAt = nil
     recordingURL = nil
     startedAt = nil
     targetApplication = nil

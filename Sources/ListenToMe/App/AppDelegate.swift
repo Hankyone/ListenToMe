@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     configureHotkey()
 
     // Warm mic + OpenAI realtime while idle so hotkey isn't cold.
+    // Await mic warm so the first take promotes instead of engine.start().
     Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: 400_000_000)
       guard let self else { return }
@@ -79,7 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if !self.model.permissions.accessibilityGranted {
         _ = await self.model.permissions.ensureAccessibilityForPaste(promptIfNeeded: true)
       }
-      self.model.recording.prepareForNextTake()
+      await self.model.recording.prepareMicrophoneAndWait()
+      self.model.recording.prepareRealtimeSession()
     }
   }
 

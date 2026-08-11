@@ -41,13 +41,15 @@ struct RecordingOverlayView: View {
           .lineLimit(1)
       }
 
-      Text(timeText)
-        .font(.system(size: 11, weight: .medium, design: .monospaced))
-        .monospacedDigit()
-        .foregroundStyle(
-          isDelivered ? AppTheme.success : AppTheme.secondaryText
-        )
-        .frame(minWidth: 34, alignment: .trailing)
+      TimelineView(.periodic(from: .now, by: 0.1)) { context in
+        Text(timeText(at: context.date))
+          .font(.system(size: 11, weight: .medium, design: .monospaced))
+          .monospacedDigit()
+          .foregroundStyle(
+            isDelivered ? AppTheme.success : AppTheme.secondaryText
+          )
+          .frame(minWidth: 34, alignment: .trailing)
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 9)
@@ -134,8 +136,13 @@ struct RecordingOverlayView: View {
     }
   }
 
-  private var timeText: String {
-    let seconds = Int(coordinator.elapsed)
+  private func timeText(at now: Date) -> String {
+    let seconds: Int
+    if let started = coordinator.listenStartedAt {
+      seconds = max(0, Int(now.timeIntervalSince(started)))
+    } else {
+      seconds = Int(coordinator.elapsed)
+    }
     return String(format: "%d:%02d", seconds / 60, seconds % 60)
   }
 }
