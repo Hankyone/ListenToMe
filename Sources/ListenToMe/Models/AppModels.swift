@@ -317,17 +317,32 @@ enum VocabularyValidation {
 }
 
 enum DeliveryPolicy {
+  /// Whether we should attempt insert/paste after reactivating the target.
+  /// Focus is checked *after* activation in `TextDeliveryService` — finishing a
+  /// recording often leaves another process frontmost briefly.
+  static func canAttemptPaste(
+    target: TargetApplication?,
+    hasAccessibilityPermission: Bool
+  ) -> DeliveryOutcome {
+    guard target != nil else { return .copiedNoTarget }
+    guard hasAccessibilityPermission else {
+      return .copiedNoAccessibility
+    }
+    return .pasted
+  }
+
   static func outcome(
     target: TargetApplication?,
     frontmostProcessIdentifier: Int32?,
     hasAccessibilityPermission: Bool
   ) -> DeliveryOutcome {
-    guard let target else { return .copiedNoTarget }
+    let attempt = canAttemptPaste(
+      target: target,
+      hasAccessibilityPermission: hasAccessibilityPermission
+    )
+    guard attempt == .pasted, let target else { return attempt }
     guard target.processIdentifier == frontmostProcessIdentifier else {
       return .copiedFocusChanged
-    }
-    guard hasAccessibilityPermission else {
-      return .copiedNoAccessibility
     }
     return .pasted
   }

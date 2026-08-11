@@ -9,7 +9,29 @@ final class DeliveryPolicyTests: XCTestCase {
     processIdentifier: 42
   )
 
-  func testPastesOnlyWhenTargetStillHasFocusAndPermissionExists() {
+  func testCanAttemptPasteWhenTargetAndAccessibilityExist() {
+    XCTAssertEqual(
+      DeliveryPolicy.canAttemptPaste(
+        target: target,
+        hasAccessibilityPermission: true
+      ),
+      .pasted
+    )
+  }
+
+  func testCanAttemptPasteIgnoresCurrentFrontmost() {
+    // Finishing a recording often leaves another app frontmost briefly;
+    // that must not block an attempt after we reactivate the target.
+    XCTAssertEqual(
+      DeliveryPolicy.canAttemptPaste(
+        target: target,
+        hasAccessibilityPermission: true
+      ),
+      .pasted
+    )
+  }
+
+  func testOutcomeRequiresFocusMatch() {
     XCTAssertEqual(
       DeliveryPolicy.outcome(
         target: target,
@@ -18,9 +40,6 @@ final class DeliveryPolicyTests: XCTestCase {
       ),
       .pasted
     )
-  }
-
-  func testCopiesWhenFocusChanged() {
     XCTAssertEqual(
       DeliveryPolicy.outcome(
         target: target,
@@ -33,9 +52,8 @@ final class DeliveryPolicyTests: XCTestCase {
 
   func testCopiesWhenAccessibilityPermissionIsMissing() {
     XCTAssertEqual(
-      DeliveryPolicy.outcome(
+      DeliveryPolicy.canAttemptPaste(
         target: target,
-        frontmostProcessIdentifier: 42,
         hasAccessibilityPermission: false
       ),
       .copiedNoAccessibility
@@ -44,9 +62,8 @@ final class DeliveryPolicyTests: XCTestCase {
 
   func testCopiesWhenRecordingStartedInsideListenToMe() {
     XCTAssertEqual(
-      DeliveryPolicy.outcome(
+      DeliveryPolicy.canAttemptPaste(
         target: nil,
-        frontmostProcessIdentifier: 42,
         hasAccessibilityPermission: true
       ),
       .copiedNoTarget

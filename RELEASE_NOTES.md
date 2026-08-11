@@ -1,3 +1,3 @@
-## ListenToMe 0.3.17
+## ListenToMe 0.3.18
 
-- Accessibility status updates after you grant it in System Settings (no more stuck “Not allowed”)
+- Paste into the focused field more reliably (reactivate target, AX insert, then Cmd+V / AppleScript like Handy, VoiceInk, and Hex)
