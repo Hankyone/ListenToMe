@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let hotkey = HotkeyService()
   private let updates = UpdateService()
   private var overlayController: RecordingPanelController?
+  private var historyPanelController: StatusHistoryPanelController?
   private var mainWindowController: NSWindowController?
   private var statusItem: NSStatusItem?
   private var statusMenu: NSMenu?
@@ -35,7 +36,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       coordinator: model.recording,
       settings: model.settings
     )
+    historyPanelController = StatusHistoryPanelController(
+      model: model,
+      onOpenHistory: { [weak self] in
+        self?.model.showMainWindow(section: .history)
+      }
+    )
     model.onShowMainWindow = { [weak self] in
+      self?.historyPanelController?.close()
       self?.showMainWindow()
     }
     configureMainMenu()
@@ -190,28 +198,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     rebuildStatusMenu()
   }
 
-  @objc private func toggleDictation() {
-    Task {
-      await model.toggleRecording()
-    }
-  }
-
-  @objc private func copyLastTranscript() {
-    guard let entry = model.history.entries.first else { return }
-    model.recording.copyTranscript(entry.transcript)
-  }
-
-  @objc private func copyRecentTranscript(_ sender: NSMenuItem) {
-    guard
-      let rawID = sender.representedObject as? String,
-      let id = UUID(uuidString: rawID),
-      let entry = model.history.entry(id: id)
-    else {
-      return
-    }
-    model.recording.copyTranscript(entry.transcript)
-  }
-
   @objc private func openHistory() {
     model.showMainWindow(section: .history)
   }
@@ -232,6 +218,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     NSApplication.shared.terminate(nil)
   }
 
+  @objc private func statusItemClicked(_ sender: Any?) {
+    guard let event = NSApp.currentEvent else { return }
+    let isRightClick =
+      event.type == .rightMouseUp
+      || event.type == .rightMouseDown
+      || event.modifierFlags.contains(.control)
+
+    if isRightClick {
+      historyPanelController?.close()
+      showStatusMenu()
+    } else {
+      guard let button = statusItem?.button else { return }
+      historyPanelController?.toggle(relativeTo: button)
+    }
+  }
+
+  private func showStatusMenu() {
+    guard let button = statusItem?.button, let menu = statusMenu else { return }
+    rebuildStatusMenu()
+    let location = NSPoint(x: 0, y: button.bounds.height + 2)
+    menu.popUp(positioning: nil, at: location, in: button)
+  }
+
   private func configureStatusItem() {
     let statusItem = NSStatusBar.system.statusItem(
       withLength: NSStatusItem.squareLength
@@ -240,14 +249,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       systemSymbolName: "waveform",
       accessibilityDescription: "ListenToMe"
     )
-    statusItem.button?.toolTip = "ListenToMe"
+    statusItem.button?.toolTip = "ListenToMe — click for recent, right-click for menu"
 
+    // Keep menu off the item itself so left-click can open the history panel.
     let menu = NSMenu()
     menu.delegate = self
-    statusItem.menu = menu
-
     self.statusMenu = menu
     self.statusItem = statusItem
+
+    statusItem.button?.target = self
+    statusItem.button?.action = #selector(statusItemClicked(_:))
+    statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
     rebuildStatusMenu()
   }
 
@@ -357,60 +369,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     guard let menu = statusMenu else { return }
     menu.removeAllItems()
 
-    let status = NSMenuItem(
-      title: statusTitle,
-      action: nil,
-      keyEquivalent: ""
-    )
-    status.isEnabled = false
-    menu.addItem(status)
-
-    let toggle = addMenuItem(
-      model.recording.phase.isRecording
-        ? "Stop Dictation"
-        : "Start Dictation  ·  \(model.settings.hotkey.display)",
-      action: #selector(toggleDictation),
-      to: menu
-    )
-    toggle.isEnabled =
-      model.settings.selectedEngineIsReady
-      && (model.recording.phase == .idle
-        || model.recording.phase == .recording
-        || {
-          if case .delivered = model.recording.phase { return true }
-          if model.recording.phase == .failed { return true }
-          return false
-        }())
-
-    menu.addItem(.separator())
-
-    let copyLast = addMenuItem(
-      "Copy Last Transcript",
-      action: #selector(copyLastTranscript),
-      to: menu
-    )
-    copyLast.isEnabled = !model.history.entries.isEmpty
-
-    let recentItem = NSMenuItem(
-      title: "Recent Dictation",
-      action: nil,
-      keyEquivalent: ""
-    )
-    recentItem.submenu = recentMenu()
-    recentItem.isEnabled = !model.history.entries.isEmpty
-    menu.addItem(recentItem)
-
-    addMenuItem(
-      "Open History…",
-      action: #selector(openHistory),
-      to: menu
-    )
-    addMenuItem(
-      "Custom Words…",
-      action: #selector(openVocabulary),
-      to: menu
-    )
-
     let overlayItem = addMenuItem(
       "Show Recording Panel",
       action: #selector(toggleRecordingOverlay),
@@ -435,31 +393,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(quit),
       to: menu
     )
-  }
-
-  private func recentMenu() -> NSMenu {
-    let menu = NSMenu()
-    for entry in model.history.entries.prefix(5) {
-      let excerpt = entry.transcript
-        .replacingOccurrences(of: "\n", with: " ")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      let clipped =
-        excerpt.count > 46
-        ? String(excerpt.prefix(45)) + "…"
-        : excerpt
-      let time = entry.createdAt.formatted(
-        date: .omitted,
-        time: .shortened
-      )
-      let item = addMenuItem(
-        "\(time)  \(clipped)",
-        action: #selector(copyRecentTranscript(_:)),
-        to: menu
-      )
-      item.representedObject = entry.id.uuidString
-      item.toolTip = "Copy transcript from \(entry.shortTargetName)"
-    }
-    return menu
   }
 
   @discardableResult
