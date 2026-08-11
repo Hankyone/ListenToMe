@@ -435,10 +435,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         accessibilityDescription: title
       )
     {
+      // Baked non-symbol template so newer macOS versions don't hide SF Symbols.
       item.image = image
-      if #available(macOS 27.0, *) {
-        item.preferredImageVisibility = .visible
-      }
     }
     return item
   }
