@@ -31,35 +31,41 @@ private let hotkeyEventCallback: EventHandlerUPP = { _, event, userData in
 /// - A key combo (Carbon hotkey): tap toggles, hold speaks until release.
 /// - A lone modifier (Fn, Right Command…): hold speaks until release,
 ///   watched through `flagsChanged` monitors.
-/// While dictation is live, Escape cancels and Space locks hands-free
-/// continuation after a push-to-talk hold.
+/// While dictation is live, Escape cancels. Space locks hands-free — but only
+/// while the primary shortcut is still held (NSEvent monitors, not Carbon,
+/// so Space still matches when modifiers from the hold are down).
 @MainActor
 final class HotkeyService {
   private enum HotkeyIdentifier: UInt32 {
     case primary = 1
-    case cancel = 2
-    case lock = 3
   }
 
   var onPress: (() -> Void)?
   var onRelease: (() -> Void)?
   var onCancel: (() -> Void)?
   var onLock: (() -> Void)?
+  /// App supplies whether Space-to-lock is enabled and not already locked.
+  var isSpaceLockAllowed: () -> Bool = { true }
 
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
-  private var cancelRef: EventHotKeyRef?
-  private var lockRef: EventHotKeyRef?
   private var comboIsDown = false
 
   private var spec: HotkeySpec?
   private var globalMonitors: [Any] = []
   private var localMonitor: Any?
+  private var sessionGlobalMonitors: [Any] = []
+  private var sessionLocalMonitor: Any?
   private var modifierKeyIsDown = false
   private var holdCandidateGeneration = 0
   private var holdCandidateIsPending = false
   private var holdIsActive = false
   private let holdConfirmDelay: TimeInterval = 0.2
+
+  /// True while the primary dictation key/modifier is physically down.
+  var isPrimaryHeld: Bool {
+    comboIsDown || holdIsActive || modifierKeyIsDown
+  }
 
   /// Drops the primary shortcut, e.g. while the recorder captures a new one.
   func suspend() {
@@ -99,54 +105,9 @@ final class HotkeyService {
   }
 
   func setSessionControlsActive(_ active: Bool) {
-    if active {
-      guard installCarbonHandlerIfNeeded() else { return }
-      if cancelRef == nil {
-        var hotkeyRef: EventHotKeyRef?
-        let hotkeyID = EventHotKeyID(
-          signature: 0x4C54_4D45,
-          id: HotkeyIdentifier.cancel.rawValue
-        )
-        let status = RegisterEventHotKey(
-          UInt32(kVK_Escape),
-          0,
-          hotkeyID,
-          GetApplicationEventTarget(),
-          0,
-          &hotkeyRef
-        )
-        if status == noErr {
-          cancelRef = hotkeyRef
-        }
-      }
-      if lockRef == nil {
-        var hotkeyRef: EventHotKeyRef?
-        let hotkeyID = EventHotKeyID(
-          signature: 0x4C54_4D45,
-          id: HotkeyIdentifier.lock.rawValue
-        )
-        let status = RegisterEventHotKey(
-          UInt32(kVK_Space),
-          0,
-          hotkeyID,
-          GetApplicationEventTarget(),
-          0,
-          &hotkeyRef
-        )
-        if status == noErr {
-          lockRef = hotkeyRef
-        }
-      }
-    } else {
-      if let cancelRef {
-        UnregisterEventHotKey(cancelRef)
-        self.cancelRef = nil
-      }
-      if let lockRef {
-        UnregisterEventHotKey(lockRef)
-        self.lockRef = nil
-      }
-    }
+    tearDownSessionMonitors()
+    guard active else { return }
+    installSessionMonitors()
   }
 
   fileprivate func handleCarbonEvent(id: UInt32, kind: UInt32) {
@@ -160,14 +121,6 @@ final class HotkeyService {
         guard comboIsDown else { return }
         comboIsDown = false
         onRelease?()
-      }
-    case .cancel:
-      if kind == UInt32(kEventHotKeyPressed) {
-        onCancel?()
-      }
-    case .lock:
-      if kind == UInt32(kEventHotKeyPressed) {
-        onLock?()
       }
     case nil:
       break
@@ -199,6 +152,64 @@ final class HotkeyService {
     return status == noErr
   }
 
+  // MARK: - Session Escape / Space (NSEvent)
+
+  private func installSessionMonitors() {
+    if let monitor = NSEvent.addGlobalMonitorForEvents(
+      matching: .keyDown,
+      handler: { [weak self] event in
+        MainActor.assumeIsolated {
+          _ = self?.handleSessionKeyDown(event)
+        }
+      }
+    ) {
+      sessionGlobalMonitors.append(monitor)
+    }
+
+    sessionLocalMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: .keyDown
+    ) { [weak self] event in
+      MainActor.assumeIsolated {
+        guard let self else { return event }
+        return self.handleSessionKeyDown(event) ? event : nil
+      }
+    }
+  }
+
+  /// Returns `true` when the event should continue to the app (not consumed).
+  @discardableResult
+  private func handleSessionKeyDown(_ event: NSEvent) -> Bool {
+    // Ignore key-repeat.
+    guard !event.isARepeat else { return true }
+
+    if event.keyCode == UInt16(kVK_Escape) {
+      onCancel?()
+      return false
+    }
+
+    if event.keyCode == UInt16(kVK_Space) {
+      // Space-to-lock only while the primary shortcut is still held — that's
+      // the "keep talking and use the computer" gesture. Carbon bare-Space
+      // hotkeys never matched here because hold modifiers were still down.
+      guard isSpaceLockAllowed(), isPrimaryHeld else { return true }
+      onLock?()
+      return false
+    }
+
+    return true
+  }
+
+  private func tearDownSessionMonitors() {
+    for monitor in sessionGlobalMonitors {
+      NSEvent.removeMonitor(monitor)
+    }
+    sessionGlobalMonitors = []
+    if let sessionLocalMonitor {
+      NSEvent.removeMonitor(sessionLocalMonitor)
+      self.sessionLocalMonitor = nil
+    }
+  }
+
   // MARK: - Lone-modifier hold
 
   private func installModifierMonitors() {
@@ -210,7 +221,8 @@ final class HotkeyService {
     let keyHandler: (NSEvent) -> Void = { [weak self] _ in
       MainActor.assumeIsolated {
         // Any real keystroke means the modifier is part of a chord,
-        // not a dictation hold.
+        // not a dictation hold — except Space/Escape, which session
+        // monitors handle for lock/cancel.
         self?.holdCandidateIsPending = false
       }
     }
@@ -233,7 +245,9 @@ final class HotkeyService {
       MainActor.assumeIsolated {
         if event.type == .flagsChanged {
           flagsHandler(event)
-        } else {
+        } else if event.keyCode != UInt16(kVK_Space),
+          event.keyCode != UInt16(kVK_Escape)
+        {
           keyHandler(event)
         }
       }
@@ -310,14 +324,14 @@ final class HotkeyService {
     if let comboRef {
       UnregisterEventHotKey(comboRef)
     }
-    if let cancelRef {
-      UnregisterEventHotKey(cancelRef)
-    }
-    if let lockRef {
-      UnregisterEventHotKey(lockRef)
-    }
     if let handlerRef {
       RemoveEventHandler(handlerRef)
+    }
+    for monitor in sessionGlobalMonitors {
+      NSEvent.removeMonitor(monitor)
+    }
+    if let sessionLocalMonitor {
+      NSEvent.removeMonitor(sessionLocalMonitor)
     }
   }
 }

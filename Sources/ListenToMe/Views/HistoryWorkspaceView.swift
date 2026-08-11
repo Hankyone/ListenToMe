@@ -144,7 +144,7 @@ private struct EmptyHistoryView: View {
         .font(.system(size: 18, weight: .semibold))
         .foregroundStyle(AppTheme.primaryText)
       Text(
-        "Press \(hotkeyDisplay), speak, then release. Space locks hands-free; press the shortcut again to finish."
+        "Press \(hotkeyDisplay), speak, then release or press again to finish. Space while holding locks hands-free."
       )
       .font(.system(size: 13))
       .foregroundStyle(AppTheme.secondaryText)

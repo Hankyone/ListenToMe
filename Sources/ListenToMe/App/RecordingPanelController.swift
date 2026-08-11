@@ -50,9 +50,10 @@ final class RecordingPanelController {
       return
     }
     switch phase {
-    case .connecting, .recording, .finishing, .delivered:
+    case .connecting, .recording:
       show()
-    case .idle, .failed:
+    case .finishing, .delivered, .idle, .failed:
+      // Disappear as soon as the take ends — don't linger through paste.
       panel.orderOut(nil)
     }
   }

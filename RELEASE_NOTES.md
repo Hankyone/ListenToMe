@@ -1,5 +1,5 @@
-## ListenToMe 0.3.28
+## ListenToMe 0.3.29
 
-- Fix frozen overlay: media pause AppleScript no longer blocks the main thread (was freezing timer + waveform for 5–8s every take)
-- Timer ticks from hotkey via TimelineView; mic warm-up awaited at launch so the first take promotes instantly
-- Standby OpenAI socket and live audio send run off the main actor
+- Fix Space-to-lock while holding the shortcut (works with modifiers held; was a bare Carbon Space hotkey that never matched)
+- Overlay disappears as soon as you finish — no lingering through paste
+- Setup toggles for tap-to-keep-listening, hold-to-talk, and Space-lock — still one shortcut

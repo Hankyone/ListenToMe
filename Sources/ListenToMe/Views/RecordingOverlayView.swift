@@ -130,7 +130,10 @@ struct RecordingOverlayView: View {
       if coordinator.isHandsFreeLocked {
         return "locked · esc"
       }
-      return "space locks · esc"
+      if settings.spaceLocksHandsFree, settings.holdIsPushToTalk {
+        return "space locks · esc"
+      }
+      return "esc cancels"
     default:
       return settings.hotkey.display.lowercased()
     }

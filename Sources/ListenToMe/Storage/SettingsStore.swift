@@ -8,6 +8,21 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(showRecordingOverlay, forKey: Keys.showRecordingOverlay) }
   }
 
+  /// Tap the shortcut → keep listening until you tap it again.
+  @Published var tapStartsHandsFree: Bool {
+    didSet { defaults.set(tapStartsHandsFree, forKey: Keys.tapStartsHandsFree) }
+  }
+
+  /// Hold the shortcut → speak until release (push-to-talk).
+  @Published var holdIsPushToTalk: Bool {
+    didSet { defaults.set(holdIsPushToTalk, forKey: Keys.holdIsPushToTalk) }
+  }
+
+  /// While holding, Space locks hands-free so you can release and keep talking.
+  @Published var spaceLocksHandsFree: Bool {
+    didSet { defaults.set(spaceLocksHandsFree, forKey: Keys.spaceLocksHandsFree) }
+  }
+
   @Published var basePrompt: String {
     didSet { defaults.set(basePrompt, forKey: Keys.basePrompt) }
   }
@@ -59,6 +74,9 @@ final class SettingsStore: ObservableObject {
 
   private enum Keys {
     static let showRecordingOverlay = "appearance.showRecordingOverlay"
+    static let tapStartsHandsFree = "hotkey.tapStartsHandsFree"
+    static let holdIsPushToTalk = "hotkey.holdIsPushToTalk"
+    static let spaceLocksHandsFree = "hotkey.spaceLocksHandsFree"
     static let basePrompt = "transcription.basePrompt"
     static let delay = "transcription.delay"
     static let languageText = "transcription.languages"
@@ -78,6 +96,15 @@ final class SettingsStore: ObservableObject {
     self.apiKeys = apiKeys
     showRecordingOverlay =
       defaults.object(forKey: Keys.showRecordingOverlay) as? Bool
+      ?? true
+    tapStartsHandsFree =
+      defaults.object(forKey: Keys.tapStartsHandsFree) as? Bool
+      ?? true
+    holdIsPushToTalk =
+      defaults.object(forKey: Keys.holdIsPushToTalk) as? Bool
+      ?? true
+    spaceLocksHandsFree =
+      defaults.object(forKey: Keys.spaceLocksHandsFree) as? Bool
       ?? true
     basePrompt =
       defaults.string(forKey: Keys.basePrompt)

@@ -89,12 +89,7 @@ struct HotkeyRecorderView: View {
     if settings.isCapturingHotkey {
       return "Press a key combination, or press and release one modifier alone, like Right ⌘ or Globe. Esc keeps the current shortcut."
     }
-    switch settings.hotkey.kind {
-    case .keyCombo:
-      return "Tap to start and stop, or hold to talk. While holding, Space locks hands-free; press the shortcut again to finish."
-    case .modifierHold:
-      return "Hold to talk, or press Space while holding to keep going hands-free. Press again to finish. Needs Accessibility access."
-    }
+    return "Behaviors for this shortcut are below — tap, hold, and Space lock."
   }
 
   private func beginCapture() {

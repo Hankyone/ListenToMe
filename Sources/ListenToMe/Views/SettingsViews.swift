@@ -132,18 +132,72 @@ struct SettingsContentView: View {
         HotkeyRecorderView(settings: settings)
 
         Text(
-          "Esc cancels a dictation in progress. If you change apps while finishing, the transcript is copied to the clipboard instead of being pasted into the wrong place."
+          "One shortcut does it all. Esc cancels. If you change apps while finishing, the transcript is copied instead of pasted into the wrong place."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
 
-        Toggle(
-          "Show the recording panel while listening",
-          isOn: $settings.showRecordingOverlay
-        )
-        .toggleStyle(.checkbox)
+        VStack(alignment: .leading, spacing: 8) {
+          Toggle(
+            "Tap to keep listening (press again to finish)",
+            isOn: $settings.tapStartsHandsFree
+          )
+          .toggleStyle(.checkbox)
+          .disabled(settings.hotkey.kind == .modifierHold)
+
+          Toggle(
+            "Hold to talk (release to finish)",
+            isOn: $settings.holdIsPushToTalk
+          )
+          .toggleStyle(.checkbox)
+
+          Toggle(
+            "Space while holding locks hands-free",
+            isOn: $settings.spaceLocksHandsFree
+          )
+          .toggleStyle(.checkbox)
+          .disabled(!settings.holdIsPushToTalk)
+
+          Toggle(
+            "Show the recording panel while listening",
+            isOn: $settings.showRecordingOverlay
+          )
+          .toggleStyle(.checkbox)
+        }
+
+        Text(shortcutBehaviorSummary)
+          .font(.system(size: 11))
+          .foregroundStyle(AppTheme.faintText)
+          .fixedSize(horizontal: false, vertical: true)
       }
+    }
+  }
+
+  private var shortcutBehaviorSummary: String {
+    if settings.hotkey.kind == .modifierHold {
+      if settings.holdIsPushToTalk, settings.spaceLocksHandsFree {
+        return "Hold \(settings.hotkey.display) to talk. Space locks so you can release and keep going; press the shortcut again to finish."
+      }
+      if settings.holdIsPushToTalk {
+        return "Hold \(settings.hotkey.display) to talk; release to finish."
+      }
+      return "Enable “Hold to talk” — a lone modifier shortcut needs a hold."
+    }
+
+    switch (settings.tapStartsHandsFree, settings.holdIsPushToTalk) {
+    case (true, true):
+      return settings.spaceLocksHandsFree
+        ? "Tap to start and stop, or hold to talk. While holding, Space locks hands-free."
+        : "Tap to start and stop, or hold to talk until you release."
+    case (true, false):
+      return "Tap to start; tap again to finish."
+    case (false, true):
+      return settings.spaceLocksHandsFree
+        ? "Hold to talk. Space locks hands-free; press the shortcut again to finish."
+        : "Hold to talk; release to finish."
+    case (false, false):
+      return "Turn on tap and/or hold above so the shortcut does something."
     }
   }
 

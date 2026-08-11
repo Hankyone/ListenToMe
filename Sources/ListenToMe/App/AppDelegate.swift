@@ -98,6 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     hotkey.onLock = { [weak self] in
       self?.lockDictationFromHold()
     }
+    hotkey.isSpaceLockAllowed = { [weak self] in
+      guard let self else { return false }
+      guard self.model.settings.spaceLocksHandsFree else { return false }
+      guard !self.model.recording.isHandsFreeLocked else { return false }
+      return self.pressStartedRecording || self.model.recording.phase.isBusy
+    }
     applyHotkey(model.settings.hotkey)
 
     model.settings.$hotkey
@@ -175,6 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if model.settings.showRecordingOverlay {
         overlayController?.update(for: .recording, enabled: true)
       }
+      // Space/Esc must work while the primary key is still held — don't wait
+      // for phase to flip inside the async start() Task.
+      hotkey.setSessionControlsActive(true)
       Task {
         await model.recording.start()
       }
@@ -199,8 +208,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Space locked the take: keep listening after the hotkey comes up.
     guard !model.recording.isHandsFreeLocked else { return }
 
+    let settings = model.settings
     let isHoldStyle: Bool
-    if model.settings.hotkey.kind == .modifierHold {
+    if settings.hotkey.kind == .modifierHold {
+      // Lone modifiers are always hold-to-talk when that mode is on.
+      isHoldStyle = settings.holdIsPushToTalk
+    } else if !settings.holdIsPushToTalk {
+      // Tap-only: release never stops; second press does.
+      isHoldStyle = false
+    } else if !settings.tapStartsHandsFree {
+      // Hold-only: any press stops on release.
       isHoldStyle = true
     } else if let pressStartedAt {
       isHoldStyle = Date().timeIntervalSince(pressStartedAt) >= pushToTalkThreshold
@@ -209,23 +226,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     guard isHoldStyle else { return }
 
+    // Drop the plate immediately on release — don't wait for paste/finalize.
+    if model.settings.showRecordingOverlay {
+      overlayController?.update(for: .finishing, enabled: true)
+    }
+
     pendingReleaseTask?.cancel()
     let grace = releaseGraceNanoseconds
     pendingReleaseTask = Task { [weak self] in
       try? await Task.sleep(nanoseconds: grace)
       guard let self, !Task.isCancelled else { return }
       self.pendingReleaseTask = nil
-      guard !self.model.recording.isHandsFreeLocked else { return }
+      guard !self.model.recording.isHandsFreeLocked else {
+        // Locked during the grace window — bring the plate back.
+        if self.model.settings.showRecordingOverlay {
+          self.overlayController?.update(for: .recording, enabled: true)
+        }
+        return
+      }
       await self.model.recording.requestStop()
     }
   }
 
   private func lockDictationFromHold() {
-    switch model.recording.phase {
-    case .connecting, .recording:
+    guard model.settings.spaceLocksHandsFree else { return }
+    // Allow lock as soon as this press started a take — phase may not have
+    // flipped to .recording yet if start() is still hopping onto MainActor.
+    if pressStartedRecording
+      || model.recording.phase == .connecting
+      || model.recording.phase == .recording
+    {
       model.recording.setHandsFreeLocked(true)
-    default:
-      break
     }
   }
 
