@@ -371,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let overlayItem = addMenuItem(
       "Show Recording Panel",
+      symbolName: "rectangle.bottomhalf.inset.filled",
       action: #selector(toggleRecordingOverlay),
       to: menu
     )
@@ -379,17 +380,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     menu.addItem(.separator())
     addMenuItem(
       "Setup…",
+      symbolName: "slider.horizontal.3",
       action: #selector(openSetup),
       to: menu
     )
     let checkForUpdates = addMenuItem(
       "Check for Updates…",
+      symbolName: "arrow.triangle.2.circlepath",
       action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
       to: menu
     )
     checkForUpdates.target = updates.updaterController
     addMenuItem(
       "Quit ListenToMe",
+      symbolName: "power",
       action: #selector(quit),
       to: menu
     )
@@ -398,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   @discardableResult
   private func addMenuItem(
     _ title: String,
+    symbolName: String? = nil,
     action: Selector,
     to menu: NSMenu
   ) -> NSMenuItem {
@@ -407,6 +412,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       keyEquivalent: ""
     )
     item.target = self
+    if let symbolName,
+      let image = NSImage(
+        systemSymbolName: symbolName,
+        accessibilityDescription: title
+      )
+    {
+      image.isTemplate = true
+      item.image = image
+    }
     return item
   }
 
