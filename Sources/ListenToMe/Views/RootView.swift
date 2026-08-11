@@ -25,47 +25,69 @@ struct RootView: View {
     .frame(minWidth: 840, minHeight: 560)
     .preferredColorScheme(.dark)
     .tint(AppTheme.accent)
-    .alert(
-      "Something went wrong",
-      isPresented: Binding(
-        get: { recording.errorMessage != nil },
-        set: { isPresented in
-          if !isPresented {
-            recording.errorMessage = nil
-          }
-        }
-      )
-    ) {
-      Button("Open Setup") {
-        model.selectedSection = .settings
-        recording.errorMessage = nil
-      }
-      Button("OK", role: .cancel) {
-        recording.errorMessage = nil
-      }
-    } message: {
-      Text(recording.errorMessage ?? "")
-    }
   }
 
   @ViewBuilder
   private var detail: some View {
-    switch model.selectedSection {
-    case .history:
-      HistoryWorkspaceView(
-        history: model.history,
-        selectedID: $model.selectedHistoryID,
-        recording: model.recording,
-        hotkeyDisplay: model.settings.hotkey.display
-      )
-    case .vocabulary:
-      VocabularyView(settings: model.settings)
-    case .settings:
-      SettingsContentView(
-        settings: model.settings,
-        permissions: model.permissions
-      )
+    VStack(spacing: 0) {
+      if let message = recording.errorMessage {
+        inlineNotice(message)
+      }
+
+      Group {
+        switch model.selectedSection {
+        case .history:
+          HistoryWorkspaceView(
+            history: model.history,
+            selectedID: $model.selectedHistoryID,
+            recording: model.recording,
+            hotkeyDisplay: model.settings.hotkey.display
+          )
+        case .vocabulary:
+          VocabularyView(settings: model.settings)
+        case .settings:
+          SettingsContentView(
+            settings: model.settings,
+            permissions: model.permissions
+          )
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+  }
+
+  private func inlineNotice(_ message: String) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundStyle(AppTheme.accent)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Dictation stopped")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(AppTheme.primaryText)
+        Text(message)
+          .font(.system(size: 12))
+          .foregroundStyle(AppTheme.secondaryText)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 8)
+      Button("Open Setup") {
+        model.selectedSection = .settings
+        recording.errorMessage = nil
+      }
+      .buttonStyle(QuietButtonStyle())
+      Button {
+        recording.errorMessage = nil
+      } label: {
+        Image(systemName: "xmark")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(AppTheme.faintText)
+      }
+      .buttonStyle(.plain)
+      .help("Dismiss")
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
+    .background(AppTheme.raisedSurface)
   }
 }
 

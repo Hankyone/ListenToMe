@@ -1,8 +1,5 @@
-## ListenToMe 0.3.9
+## ListenToMe 0.3.10
 
-- Update window shows release notes inline (no more download error)
-- Clearer update copy without the em dash between versions
-- Left-click the menu bar icon for your last three dictations, with play and copy
-- Right-click menu is simpler: recording panel, Setup, updates, and Quit (with icons)
-- Setup supports OpenAI or OpenRouter, with create-key links and PermissionFlow guidance
-- History can reprocess a recording with your current provider and writing guidance
+- Errors show under the menu bar icon instead of a modal “Dictation stopped” alert
+- Recent panel anchors correctly under the menu bar icon
+- Main window uses an inline notice banner instead of a blocking alert

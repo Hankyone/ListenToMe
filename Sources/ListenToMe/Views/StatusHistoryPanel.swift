@@ -4,7 +4,9 @@ struct StatusHistoryPanel: View {
   @ObservedObject var history: HistoryStore
   @ObservedObject var recording: RecordingCoordinator
   var onOpenHistory: () -> Void
+  var onOpenSetup: () -> Void
   var onDismiss: () -> Void
+  var onClearNotice: () -> Void
 
   @StateObject private var playback = AudioPlaybackController()
   @State private var activePlaybackID: UUID?
@@ -12,6 +14,18 @@ struct StatusHistoryPanel: View {
 
   private var recentEntries: [HistoryEntry] {
     Array(history.entries.prefix(3))
+  }
+
+  private var notice: String? {
+    recording.errorMessage
+  }
+
+  private var noticeSuggestsSetup: Bool {
+    guard let notice else { return false }
+    return notice.localizedCaseInsensitiveContains("key")
+      || notice.localizedCaseInsensitiveContains("shortcut")
+      || notice.localizedCaseInsensitiveContains("setup")
+      || notice.localizedCaseInsensitiveContains("permission")
   }
 
   var body: some View {
@@ -28,6 +42,12 @@ struct StatusHistoryPanel: View {
       .padding(.horizontal, 16)
       .padding(.top, 14)
       .padding(.bottom, 10)
+
+      if let notice {
+        noticeBanner(notice)
+          .padding(.horizontal, 12)
+          .padding(.bottom, 10)
+      }
 
       if recentEntries.isEmpty {
         emptyState
@@ -71,7 +91,62 @@ struct StatusHistoryPanel: View {
     if recording.phase == .recording { return "Listening" }
     if recording.phase == .connecting { return "Connecting" }
     if recording.phase == .finishing { return "Finishing" }
+    if notice != nil || recording.phase == .failed { return "Needs attention" }
     return "Ready"
+  }
+
+  @ViewBuilder
+  private func noticeBanner(_ message: String) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 8) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(AppTheme.accent)
+          .padding(.top, 1)
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Dictation stopped")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(AppTheme.primaryText)
+          Text(message)
+            .font(.system(size: 12))
+            .foregroundStyle(AppTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+        Button {
+          onClearNotice()
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(AppTheme.faintText)
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Dismiss")
+      }
+
+      if noticeSuggestsSetup {
+        Button {
+          onOpenSetup()
+          onDismiss()
+        } label: {
+          Text("Open Setup…")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(AppTheme.accent)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(12)
+    .background(
+      ChamferedPlate(cut: 8)
+        .fill(AppTheme.raisedSurface)
+        .overlay(
+          ChamferedPlate(cut: 8)
+            .stroke(AppTheme.accent.opacity(0.35), lineWidth: 1)
+        )
+    )
   }
 
   private var emptyState: some View {

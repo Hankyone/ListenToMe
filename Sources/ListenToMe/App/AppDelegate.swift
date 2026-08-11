@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       model: model,
       onOpenHistory: { [weak self] in
         self?.model.showMainWindow(section: .history)
+      },
+      onOpenSetup: { [weak self] in
+        self?.model.showMainWindow(section: .settings)
       }
     )
     model.onShowMainWindow = { [weak self] in
@@ -501,37 +504,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func presentErrorIfNeeded(_ message: String) {
-    if mainWindowController?.window?.isVisible == true {
-      return
-    }
-
-    NSApplication.shared.activate(ignoringOtherApps: true)
-    let alert = NSAlert()
-    alert.alertStyle = .warning
-    alert.messageText = "Dictation stopped"
-    alert.informativeText = message
-    alert.addButton(withTitle: "OK")
-    if message.localizedCaseInsensitiveContains("key")
-      || message.localizedCaseInsensitiveContains("shortcut")
-      || message.localizedCaseInsensitiveContains("setup")
-    {
-      alert.addButton(withTitle: "Open Setup")
-    }
-    let response = alert.runModal()
-    model.recording.errorMessage = nil
-    if response == .alertSecondButtonReturn {
-      model.showMainWindow(section: .settings)
-    }
+    // Never steal focus with a modal. Surface the notice under the menu-bar
+    // icon (same place as Recent). The main window shows an inline banner.
+    updateStatusItem(for: model.recording.phase)
+    statusItem?.button?.toolTip = "ListenToMe · \(message)"
+    guard mainWindowController?.window?.isVisible != true else { return }
+    guard let button = statusItem?.button else { return }
+    historyPanelController?.show(relativeTo: button)
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {
     let isRecording = phase == .recording
+    let needsAttention =
+      phase == .failed || model.recording.errorMessage != nil
     statusItem?.button?.image = NSImage(
       systemSymbolName: isRecording ? "record.circle.fill" : "waveform",
       accessibilityDescription: isRecording ? "Recording" : "ListenToMe"
     )
     statusItem?.button?.contentTintColor =
-      isRecording
+      isRecording || needsAttention
       ? NSColor(calibratedRed: 0.80, green: 0.35, blue: 0.24, alpha: 1)
       : nil
     statusItem?.button?.toolTip = "ListenToMe · \(statusTitle)"
