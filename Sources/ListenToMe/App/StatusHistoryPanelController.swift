@@ -1,17 +1,26 @@
 import AppKit
 import SwiftUI
 
+/// Non-activating panel so notices never steal key focus from the user's app.
+private final class StatusMenuPanel: NSPanel {
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class StatusHistoryPanelController {
-  private let popover = NSPopover()
+  private let panel: StatusMenuPanel
   private let model: AppModel
   private let onOpenHistory: () -> Void
   private let onOpenSetup: () -> Void
   private let panelWidth: CGFloat = 340
+  private let menuGap: CGFloat = 6
+
   private var globalMouseMonitor: Any?
   private var localEventMonitor: Any?
-  private var workspaceObserver: NSObjectProtocol?
+  private var autoDismissTask: Task<Void, Never>?
   private weak var anchorButton: NSStatusBarButton?
+  private var hostingController: NSHostingController<StatusHistoryPanel>?
 
   init(
     model: AppModel,
@@ -22,76 +31,117 @@ final class StatusHistoryPanelController {
     self.onOpenHistory = onOpenHistory
     self.onOpenSetup = onOpenSetup
 
-    // Own dismissal ourselves. `.transient` only closes after the popover has
-    // become key — which means “click it, then click away.”
-    popover.behavior = .applicationDefined
-    popover.animates = true
-    popover.contentSize = NSSize(width: panelWidth, height: 220)
-    remountContent()
+    panel = StatusMenuPanel(
+      contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 220),
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+    panel.level = .statusBar
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
+    panel.hidesOnDeactivate = false
+    panel.isReleasedWhenClosed = false
+    panel.animationBehavior = .utilityWindow
   }
 
-  var isShown: Bool { popover.isShown }
+  var isShown: Bool { panel.isVisible }
 
   func toggle(relativeTo button: NSStatusBarButton) {
-    if popover.isShown {
+    if panel.isVisible {
       close()
       return
     }
-    show(relativeTo: button)
+    show(relativeTo: button, style: .recent)
   }
 
-  /// Opens under the menu-bar icon. Dismisses on click-away or Escape.
-  func show(relativeTo button: NSStatusBarButton) {
-    remountContent()
+  /// Opens under the menu-bar icon without activating ListenToMe.
+  func show(
+    relativeTo button: NSStatusBarButton,
+    style: StatusPanelStyle = .recent
+  ) {
+    cancelAutoDismiss()
     anchorButton = button
-    button.window?.layoutIfNeeded()
-    popover.show(
-      relativeTo: button.bounds,
-      of: button,
-      preferredEdge: .minY
-    )
+    remountContent(style: style)
+    positionPanel(relativeTo: button)
+    // orderFrontRegardless keeps the user's frontmost app key.
+    panel.orderFrontRegardless()
     startDismissalMonitoring()
+
+    if case .notice(let seconds) = style, seconds > 0 {
+      autoDismissTask = Task { [weak self] in
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        guard !Task.isCancelled else { return }
+        self?.close()
+      }
+    }
   }
 
   func close() {
+    cancelAutoDismiss()
     stopDismissalMonitoring()
-    guard popover.isShown else { return }
-    popover.performClose(nil)
+    panel.orderOut(nil)
   }
 
-  private func remountContent() {
-    let host = NSHostingController(
-      rootView: StatusHistoryPanel(
-        history: model.history,
-        recording: model.recording,
-        onOpenHistory: onOpenHistory,
-        onOpenSetup: onOpenSetup,
-        onDismiss: { [weak self] in
-          self?.close()
-        },
-        onClearNotice: { [weak self] in
-          self?.model.recording.errorMessage = nil
-        }
-      )
+  private func cancelAutoDismiss() {
+    autoDismissTask?.cancel()
+    autoDismissTask = nil
+  }
+
+  private func remountContent(style: StatusPanelStyle) {
+    let root = StatusHistoryPanel(
+      history: model.history,
+      recording: model.recording,
+      presentation: style.presentation,
+      onOpenHistory: onOpenHistory,
+      onOpenSetup: onOpenSetup,
+      onDismiss: { [weak self] in
+        self?.close()
+      },
+      onClearNotice: { [weak self] in
+        self?.model.recording.errorMessage = nil
+      }
     )
-    // Match contentSize to the SwiftUI tree before showing. A taller stale
-    // contentSize makes AppKit park the popover, then shrink it — leaving a
-    // gap under the menu bar.
-    let fitting = host.sizeThatFits(
+    let controller = NSHostingController(rootView: root)
+    let fitting = controller.sizeThatFits(
       in: NSSize(width: panelWidth, height: 10_000)
     )
-    popover.contentSize = NSSize(
-      width: panelWidth,
-      height: min(max(fitting.height.rounded(.up), 140), 520)
+    let height = min(max(fitting.height.rounded(.up), 72), 520)
+    controller.view.frame = NSRect(x: 0, y: 0, width: panelWidth, height: height)
+    panel.contentView = controller.view
+    hostingController = controller
+    panel.setContentSize(NSSize(width: panelWidth, height: height))
+  }
+
+  private func positionPanel(relativeTo button: NSStatusBarButton) {
+    guard let buttonWindow = button.window else { return }
+    buttonWindow.layoutIfNeeded()
+
+    let buttonRect = buttonWindow.convertToScreen(
+      button.convert(button.bounds, to: nil)
     )
-    popover.contentViewController = host
+    let size = panel.frame.size
+    var origin = NSPoint(
+      x: buttonRect.midX - size.width / 2,
+      y: buttonRect.minY - size.height - menuGap
+    )
+
+    if let screen = buttonWindow.screen ?? NSScreen.main {
+      let visible = screen.visibleFrame
+      origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
+      // Keep attached under the menu bar even if the panel is tall.
+      origin.y = min(origin.y, buttonRect.minY - size.height - menuGap)
+      origin.y = max(origin.y, visible.minY + 8)
+    }
+
+    panel.setFrameOrigin(origin)
   }
 
   private func startDismissalMonitoring() {
     stopDismissalMonitoring()
 
-    // Global monitors run off the main thread and never see in-app events.
-    // Bounce to the main actor so close() is safe and actually runs.
     globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
       matching: [.leftMouseDown, .rightMouseDown]
     ) { [weak self] _ in
@@ -113,28 +163,11 @@ final class StatusHistoryPanelController {
         return event
       }
 
-      if self.isMouseInsidePopoverOrAnchor() {
+      if self.isMouseInsidePanelOrAnchor() {
         return event
       }
       self.close()
       return event
-    }
-
-    workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-      forName: NSWorkspace.didActivateApplicationNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] notification in
-      guard
-        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
-          as? NSRunningApplication,
-        app.bundleIdentifier != Bundle.main.bundleIdentifier
-      else {
-        return
-      }
-      Task { @MainActor in
-        self?.close()
-      }
     }
   }
 
@@ -147,27 +180,19 @@ final class StatusHistoryPanelController {
       NSEvent.removeMonitor(localEventMonitor)
       self.localEventMonitor = nil
     }
-    if let workspaceObserver {
-      NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
-      self.workspaceObserver = nil
-    }
   }
 
   private func dismissFromOutsideInteraction() {
-    guard popover.isShown else { return }
-    if isMouseInsidePopoverOrAnchor() { return }
+    guard panel.isVisible else { return }
+    if isMouseInsidePanelOrAnchor() { return }
     close()
   }
 
-  private func isMouseInsidePopoverOrAnchor() -> Bool {
+  private func isMouseInsidePanelOrAnchor() -> Bool {
     let screenPoint = NSEvent.mouseLocation
-
-    if let popoverWindow = popover.contentViewController?.view.window,
-      popoverWindow.frame.contains(screenPoint)
-    {
+    if panel.frame.contains(screenPoint) {
       return true
     }
-
     if let button = anchorButton, let buttonWindow = button.window {
       let rectInWindow = button.convert(button.bounds, to: nil)
       let rectOnScreen = buttonWindow.convertToScreen(rectInWindow)
@@ -175,7 +200,19 @@ final class StatusHistoryPanelController {
         return true
       }
     }
-
     return false
+  }
+}
+
+enum StatusPanelStyle {
+  case recent
+  /// Compact notice that auto-dismisses after `seconds`.
+  case notice(seconds: TimeInterval)
+
+  var presentation: StatusHistoryPanel.Presentation {
+    switch self {
+    case .recent: .recent
+    case .notice: .noticeOnly
+    }
   }
 }

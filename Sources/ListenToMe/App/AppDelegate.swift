@@ -504,13 +504,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func presentErrorIfNeeded(_ message: String) {
-    // Never steal focus with a modal. Surface the notice under the menu-bar
-    // icon (same place as Recent). The main window shows an inline banner.
+    // Non-activating notice under the menu bar — never activate / makeKey.
     updateStatusItem(for: model.recording.phase)
     statusItem?.button?.toolTip = "ListenToMe · \(message)"
     guard mainWindowController?.window?.isVisible != true else { return }
     guard let button = statusItem?.button else { return }
-    historyPanelController?.show(relativeTo: button)
+    historyPanelController?.show(
+      relativeTo: button,
+      style: .notice(seconds: 4)
+    )
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {

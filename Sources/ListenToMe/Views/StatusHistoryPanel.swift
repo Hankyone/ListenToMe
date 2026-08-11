@@ -1,8 +1,14 @@
 import SwiftUI
 
 struct StatusHistoryPanel: View {
+  enum Presentation {
+    case recent
+    case noticeOnly
+  }
+
   @ObservedObject var history: HistoryStore
   @ObservedObject var recording: RecordingCoordinator
+  var presentation: Presentation = .recent
   var onOpenHistory: () -> Void
   var onOpenSetup: () -> Void
   var onDismiss: () -> Void
@@ -29,6 +35,43 @@ struct StatusHistoryPanel: View {
   }
 
   var body: some View {
+    Group {
+      switch presentation {
+      case .noticeOnly:
+        noticeOnlyBody
+      case .recent:
+        recentBody
+      }
+    }
+    .frame(width: 340)
+    .background(AppTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .stroke(AppTheme.edge.opacity(0.7), lineWidth: 1)
+    )
+    .preferredColorScheme(.dark)
+    .onDisappear {
+      playback.stop()
+      activePlaybackID = nil
+    }
+  }
+
+  private var noticeOnlyBody: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      if let notice {
+        noticeBanner(notice)
+          .padding(12)
+      } else {
+        Text("Ready")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(AppTheme.faintText)
+          .padding(14)
+      }
+    }
+  }
+
+  private var recentBody: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .firstTextBaseline) {
         Text("Recent")
@@ -78,13 +121,6 @@ struct StatusHistoryPanel: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 12)
     }
-    .frame(width: 340)
-    .background(AppTheme.surface)
-    .preferredColorScheme(.dark)
-    .onDisappear {
-      playback.stop()
-      activePlaybackID = nil
-    }
   }
 
   private var modelStatus: String {
@@ -115,6 +151,9 @@ struct StatusHistoryPanel: View {
         Spacer(minLength: 0)
         Button {
           onClearNotice()
+          if presentation == .noticeOnly {
+            onDismiss()
+          }
         } label: {
           Image(systemName: "xmark")
             .font(.system(size: 10, weight: .semibold))

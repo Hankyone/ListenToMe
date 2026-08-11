@@ -1,3 +1,4 @@
-## ListenToMe 0.3.12
+## ListenToMe 0.3.13
 
-- Recent / error panel dismisses on the first click away — no need to focus it first
+- Replaced the menu-bar popover (and its ugly arrow) with a quiet rounded panel
+- Error notices no longer steal keyboard focus, and auto-dismiss after a few seconds
