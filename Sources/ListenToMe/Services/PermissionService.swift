@@ -11,6 +11,7 @@ final class PermissionService: ObservableObject {
   @Published private(set) var accessibilityGranted = false
 
   private let microphoneProvider = MicrophonePermissionStatusProvider()
+  private let accessibilityProvider = AccessibilityPermissionStatusProvider()
   private var accessibilityChangeObserver: NSObjectProtocol?
   private var visibilityPollTask: Task<Void, Never>?
   private var pendingAccessibilityRechecks: Task<Void, Never>?
@@ -29,10 +30,7 @@ final class PermissionService: ObservableObject {
 
   func refresh() {
     microphoneGranted = microphoneProvider.authorizationState() == .granted
-    // Read via options API (prompt off). Immediate reads right after the
-    // System Settings toggle can be stale — callers delay/poll as needed.
-    let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false]
-    accessibilityGranted = AXIsProcessTrustedWithOptions(options)
+    accessibilityGranted = readAccessibilityTrusted()
   }
 
   /// Call while Setup is on screen. Menu-bar apps often never become key
@@ -42,7 +40,7 @@ final class PermissionService: ObservableObject {
     refresh()
     visibilityPollTask = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        try? await Task.sleep(nanoseconds: 750_000_000)
         self?.refresh()
       }
     }
@@ -64,9 +62,23 @@ final class PermissionService: ObservableObject {
     }
   }
 
+  /// Prefer the non-prompting options API; fall back to the simple check and
+  /// PermissionFlow's provider (they can disagree briefly after a toggle).
+  private func readAccessibilityTrusted() -> Bool {
+    let options =
+      [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
+    if AXIsProcessTrustedWithOptions(options) {
+      return true
+    }
+    if AXIsProcessTrusted() {
+      return true
+    }
+    return accessibilityProvider.authorizationState() == .granted
+  }
+
   private func observeAccessibilityAPIChanges() {
     // Fires when any app's Accessibility toggle changes. The trust bit is
-    // briefly stale if read in the notification handler — recheck after a delay.
+    // briefly stale if read in the notification handler — recheck after delays.
     accessibilityChangeObserver = DistributedNotificationCenter.default()
       .addObserver(
         forName: Notification.Name("com.apple.accessibility.api"),
@@ -82,13 +94,12 @@ final class PermissionService: ObservableObject {
   private func scheduleAccessibilityRechecks() {
     pendingAccessibilityRechecks?.cancel()
     pendingAccessibilityRechecks = Task { [weak self] in
-      // Empirically needs both a short delay and a follow-up check.
-      try? await Task.sleep(nanoseconds: 150_000_000)
-      self?.refresh()
-      try? await Task.sleep(nanoseconds: 500_000_000)
-      self?.refresh()
-      try? await Task.sleep(nanoseconds: 1_000_000_000)
-      self?.refresh()
+      for delay in [0.2, 0.6, 1.2, 2.5, 5.0] as [TimeInterval] {
+        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        guard !Task.isCancelled else { return }
+        self?.refresh()
+        if self?.accessibilityGranted == true { return }
+      }
     }
   }
 }

@@ -49,36 +49,56 @@ private struct HistoryListView: View {
       if history.entries.isEmpty {
         EmptyHistoryView(hotkeyDisplay: hotkeyDisplay)
       } else {
-        List(history.entries, selection: $selectedID) { entry in
-          HistoryRow(entry: entry)
-            .tag(entry.id)
-            .listRowSeparator(.hidden)
-            .listRowBackground(
-              ChamferedPlate(cut: 6)
-                .fill(
-                  selectedID == entry.id
-                    ? AppTheme.raisedSurface
-                    : Color.clear
+        // ScrollView instead of List — system List selection draws a blue
+        // rect that bleeds past our chamfered plates.
+        ScrollView {
+          LazyVStack(spacing: 6) {
+            ForEach(history.entries) { entry in
+              let isSelected = selectedID == entry.id
+              HistoryRow(entry: entry)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                  ChamferedPlate(cut: 7)
+                    .fill(
+                      isSelected
+                        ? AppTheme.raisedSurface
+                        : AppTheme.background.opacity(0.35)
+                    )
                 )
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-            )
-            .contextMenu {
-              Button("Copy Transcript") {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(entry.transcript, forType: .string)
-              }
-              Button("Move Recording to Trash", role: .destructive) {
-                history.remove(id: entry.id)
-                if selectedID == entry.id {
-                  selectedID = history.entries.first?.id
+                .overlay(
+                  ChamferedPlate(cut: 7)
+                    .stroke(
+                      isSelected
+                        ? AppTheme.accent.opacity(0.55)
+                        : AppTheme.edge.opacity(0.35),
+                      lineWidth: isSelected ? 1.5 : 1
+                    )
+                )
+                .contentShape(ChamferedPlate(cut: 7))
+                .onTapGesture {
+                  selectedID = entry.id
                 }
-              }
+                .contextMenu {
+                  Button("Copy Transcript") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(entry.transcript, forType: .string)
+                  }
+                  Button("Move Recording to Trash", role: .destructive) {
+                    history.remove(id: entry.id)
+                    if selectedID == entry.id {
+                      selectedID = history.entries.first?.id
+                    }
+                  }
+                }
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
+          }
+          .padding(.horizontal, 12)
+          .padding(.bottom, 16)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
       }
     }
     .background(AppTheme.surface)
@@ -110,9 +130,6 @@ private struct HistoryRow: View {
         .lineLimit(3)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(.vertical, 8)
-    .padding(.horizontal, 6)
-    .contentShape(Rectangle())
   }
 }
 

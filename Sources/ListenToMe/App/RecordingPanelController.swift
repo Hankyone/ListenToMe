@@ -11,8 +11,14 @@ final class RecordingPanelController {
   private let panel: RecordingPanel
 
   init(coordinator: RecordingCoordinator, settings: SettingsStore) {
+    let size = RecordingOverlayView.panelSize
     panel = RecordingPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 566, height: 113),
+      contentRect: NSRect(
+        x: 0,
+        y: 0,
+        width: size.width + 4,
+        height: size.height + 12
+      ),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false

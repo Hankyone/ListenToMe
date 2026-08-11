@@ -1,4 +1,6 @@
-## ListenToMe 0.3.19
+## ListenToMe 0.3.20
 
-- Validate language codes in Setup (fr-CA becomes fr) instead of failing when you dictate
-- Keep error notices short so they can’t stretch the main window on large displays
+- Compact recording panel with a smaller meter and more room for live text
+- History selection no longer bleeds a blue system highlight past the cards
+- Auto-remove history older than 30 days; empty takes no longer show an error
+- Accessibility grant no longer double-prompts; clearer quit-and-reopen guidance

@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// The floating plate shown while dictating. It sits over whatever the user
-/// is doing, so it must be instantly legible and never ambiguous about
-/// whether the microphone is live.
+/// Compact floating plate while dictating — tiny meter, room for live text.
 struct RecordingOverlayView: View {
   @ObservedObject var coordinator: RecordingCoordinator
   @ObservedObject var settings: SettingsStore
+
+  static let panelSize = CGSize(width: 420, height: 58)
 
   private var isDelivered: Bool {
     if case .delivered = coordinator.phase { return true }
@@ -13,91 +13,87 @@ struct RecordingOverlayView: View {
   }
 
   var body: some View {
-    HStack(spacing: 18) {
+    HStack(alignment: .center, spacing: 10) {
       Group {
         if coordinator.phase == .connecting {
-          ConnectingWaveform()
+          ConnectingWaveform(barWidth: 2)
         } else {
           WaveformView(
             levels: coordinator.levels,
             color: isDelivered ? AppTheme.success : AppTheme.accent,
+            barWidth: 2,
             animated: true
           )
         }
       }
-      .frame(width: 112, height: 46)
+      .frame(width: 40, height: 20)
 
-      VStack(alignment: .leading, spacing: 6) {
-        Text(statusLine)
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(AppTheme.primaryText)
-          .contentTransition(.opacity)
-          .animation(.easeOut(duration: 0.18), value: statusLine)
-
+      VStack(alignment: .leading, spacing: 2) {
         transcriptLine
-          .font(.system(size: 13))
+          .font(.system(size: 12))
           .lineLimit(2)
           .truncationMode(.head)
           .frame(maxWidth: .infinity, alignment: .leading)
+
+        Text(trailingHint)
+          .font(.system(size: 9, weight: .medium, design: .monospaced))
+          .foregroundStyle(AppTheme.faintText)
+          .lineLimit(1)
       }
 
-      VStack(alignment: .trailing, spacing: 7) {
-        Text(timeText)
-          .font(.system(size: 15, weight: .medium, design: .monospaced))
-          .monospacedDigit()
-          .foregroundStyle(
-            isDelivered ? AppTheme.success : AppTheme.primaryText
-          )
-        Text(trailingHint)
-          .font(.system(size: 10, weight: .medium, design: .monospaced))
-          .foregroundStyle(AppTheme.faintText)
-      }
-      .frame(width: 86, alignment: .trailing)
+      Text(timeText)
+        .font(.system(size: 11, weight: .medium, design: .monospaced))
+        .monospacedDigit()
+        .foregroundStyle(
+          isDelivered ? AppTheme.success : AppTheme.secondaryText
+        )
+        .frame(minWidth: 34, alignment: .trailing)
     }
-    .padding(.horizontal, 22)
-    .padding(.vertical, 17)
-    .frame(width: 560, height: 96)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 9)
+    .frame(
+      width: Self.panelSize.width,
+      height: Self.panelSize.height
+    )
     .background(
-      ChamferedPlate(cut: 12)
+      ChamferedPlate(cut: 9)
         .fill(AppTheme.surface)
         .overlay(
-          ChamferedPlate(cut: 12)
+          ChamferedPlate(cut: 9)
             .fill(AppTheme.plateSheen)
         )
     )
     .overlay(
-      ChamferedPlate(cut: 12)
+      ChamferedPlate(cut: 9)
         .stroke(AppTheme.edge.opacity(0.85), lineWidth: 1)
     )
     .compositingGroup()
     .shadow(
       color: Color.black.opacity(0.38),
-      radius: 9,
+      radius: 8,
       x: 0,
-      y: 5
+      y: 4
     )
-    .padding(.horizontal, 3)
-    .padding(.top, 3)
-    .padding(.bottom, 14)
+    .padding(.horizontal, 2)
+    .padding(.top, 2)
+    .padding(.bottom, 8)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(statusLine)
   }
 
   private var statusLine: String {
     switch coordinator.phase {
-    case .connecting:
-      return "Opening the line…"
+    case .connecting: "Opening the line"
     case .recording:
       if let target = coordinator.targetApplication?.name {
-        return "Listening · for \(target)"
+        "Listening for \(target)"
+      } else {
+        "Listening"
       }
-      return "Listening"
-    case .finishing:
-      return "Finishing the last words…"
-    case .delivered(let outcome):
-      return outcome.title
-    case .failed:
-      return "Recording stopped"
-    case .idle:
-      return "Ready"
+    case .finishing: "Finishing"
+    case .delivered(let outcome): outcome.title
+    case .failed: "Stopped"
+    case .idle: "Ready"
     }
   }
 
@@ -112,7 +108,6 @@ struct RecordingOverlayView: View {
       Text(placeholderTranscript)
         .foregroundStyle(AppTheme.secondaryText)
     } else {
-      // Committed = stable ink; tentative = still-revising live tail.
       (Text(committed).foregroundStyle(AppTheme.primaryText)
         + Text(tentative).foregroundStyle(AppTheme.secondaryText))
     }
@@ -120,12 +115,10 @@ struct RecordingOverlayView: View {
 
   private var placeholderTranscript: String {
     switch coordinator.phase {
-    case .connecting:
-      return "You can start speaking now."
-    case .finishing:
-      return "Checking the last words."
-    default:
-      return "Speak naturally. Pauses are fine."
+    case .connecting: "Start speaking…"
+    case .finishing: "Checking last words…"
+    case .delivered: "Done"
+    default: "Listening…"
     }
   }
 
@@ -133,9 +126,9 @@ struct RecordingOverlayView: View {
     switch coordinator.phase {
     case .recording, .connecting:
       if coordinator.isHandsFreeLocked {
-        return "locked · esc cancels"
+        return "locked · esc"
       }
-      return "space locks · esc cancels"
+      return "space locks · esc"
     default:
       return settings.hotkey.display.lowercased()
     }

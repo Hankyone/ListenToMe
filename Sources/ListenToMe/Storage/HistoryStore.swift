@@ -3,6 +3,9 @@ import Foundation
 
 @MainActor
 final class HistoryStore: ObservableObject {
+  /// Recordings older than this are removed on launch.
+  nonisolated static let retentionDays = 30
+
   @Published private(set) var entries: [HistoryEntry] = []
 
   let rootURL: URL
@@ -31,6 +34,7 @@ final class HistoryStore: ObservableObject {
         withIntermediateDirectories: true
       )
       load()
+      purgeExpired()
     } catch {
       entries = []
     }
@@ -50,6 +54,31 @@ final class HistoryStore: ObservableObject {
   func add(_ entry: HistoryEntry) {
     entries.insert(entry, at: 0)
     persist()
+  }
+
+  /// Drops entries older than ``retentionDays`` and trashes their audio.
+  @discardableResult
+  func purgeExpired(
+    olderThanDays days: Int = HistoryStore.retentionDays,
+    now: Date = Date()
+  ) -> Int {
+    let cutoff = now.addingTimeInterval(-TimeInterval(days) * 24 * 60 * 60)
+    let expired = entries.filter { $0.createdAt < cutoff }
+    guard !expired.isEmpty else { return 0 }
+
+    for entry in expired {
+      let audioURL = audioURL(for: entry)
+      if FileManager.default.fileExists(atPath: audioURL.path) {
+        _ = try? FileManager.default.trashItem(
+          at: audioURL,
+          resultingItemURL: nil
+        )
+      }
+    }
+    let expiredIDs = Set(expired.map(\.id))
+    entries.removeAll { expiredIDs.contains($0.id) }
+    persist()
+    return expired.count
   }
 
   func updateTranscript(id: UUID, transcript: String) {

@@ -244,7 +244,7 @@ struct SettingsContentView: View {
     SettingsSection(title: "Mac permissions") {
       VStack(alignment: .leading, spacing: 16) {
         Text(
-          "Grant opens the right System Settings pane. For Accessibility, a floating panel lets you drag ListenToMe into the list. Status refreshes automatically when you flip the toggle — if it still says Not allowed after enabling ListenToMe, quit from the menu bar and reopen."
+          "Grant opens the right System Settings pane. For Accessibility, enable the ListenToMe row (or drag the app in). After the toggle is on, quit ListenToMe from the menu bar and reopen — macOS often won’t trust a menu-bar app until relaunch. Turn off any extra ListenToMe copies in the list from old builds."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
@@ -259,8 +259,9 @@ struct SettingsContentView: View {
 
         PermissionGuidanceRow(
           title: "Accessibility",
-          detail:
-            "Needed to paste into the app where you started, and for hold-a-modifier shortcuts",
+          detail: permissions.accessibilityGranted
+            ? "Paste and modifier shortcuts are allowed."
+            : "Enable ListenToMe in Privacy & Security → Accessibility, then quit and reopen this app.",
           pane: .accessibility,
           granted: permissions.accessibilityGranted
         )
@@ -346,7 +347,9 @@ private struct PermissionGuidanceRow: View {
         suggestedAppURLs: [appURL],
         configuration: PermissionFlowConfiguration(
           requiredAppURLs: [appURL],
-          promptForAccessibilityTrust: pane == .accessibility
+          // Don't also show the system "Open System Settings" sheet —
+          // PermissionFlow already opens the Accessibility pane.
+          promptForAccessibilityTrust: false
         )
       ) { state in
         HStack(spacing: 6) {

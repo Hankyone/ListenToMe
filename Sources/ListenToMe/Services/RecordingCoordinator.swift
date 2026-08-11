@@ -182,7 +182,8 @@ final class RecordingCoordinator: ObservableObject {
       try await client?.commit()
     } catch {
       if partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        fail("OpenAI did not receive the end of this recording.")
+        // Empty take — not an error.
+        abandonQuietly()
       } else {
         await finalize(transcript: partialTranscript)
       }
@@ -196,7 +197,7 @@ final class RecordingCoordinator: ObservableObject {
       let fallback = self.partialTranscript
         .trimmingCharacters(in: .whitespacesAndNewlines)
       if fallback.isEmpty {
-        self.fail("OpenAI did not return a final transcript.")
+        self.abandonQuietly()
       } else {
         await self.finalize(transcript: fallback)
       }
@@ -344,7 +345,11 @@ final class RecordingCoordinator: ObservableObject {
       )
       await finalize(transcript: text)
     } catch {
-      fail(error.localizedDescription)
+      if Self.isBenignEmptyTake(error.localizedDescription) {
+        abandonQuietly()
+      } else {
+        fail(error.localizedDescription)
+      }
     }
   }
 
@@ -367,8 +372,21 @@ final class RecordingCoordinator: ObservableObject {
 
     case .error(let message):
       guard phase.isBusy else { return }
-      fail(message)
+      if Self.isBenignEmptyTake(message) {
+        abandonQuietly()
+      } else {
+        fail(message)
+      }
     }
+  }
+
+  private static func isBenignEmptyTake(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    return lower.contains("no speech")
+      || lower.contains("empty transcript")
+      || lower.contains("no audio")
+      || lower.contains("audio too short")
+      || lower.contains("did not return a final transcript")
   }
 
   private func applyLiveSnapshot(_ snapshot: LiveTranscriptSnapshot) {
@@ -397,9 +415,10 @@ final class RecordingCoordinator: ObservableObject {
 
     let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !finalText.isEmpty, let recordingURL else {
+      // Tap with no speech is normal — don't alarm.
       await cleanUpConnection()
       discardCurrentRecording()
-      fail("No speech was found in that recording.")
+      abandonQuietly()
       return
     }
 
@@ -440,6 +459,17 @@ final class RecordingCoordinator: ObservableObject {
     errorMessage = UserFacingError.message(from: message)
     isHandsFreeLocked = false
     phase = .failed
+    teardownSession()
+    resetRecordingReferences()
+  }
+
+  /// End a take with nothing to deliver — no banner, no "Dictation stopped".
+  private func abandonQuietly() {
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+    errorMessage = nil
+    isHandsFreeLocked = false
+    phase = .idle
     teardownSession()
     resetRecordingReferences()
   }
