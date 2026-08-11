@@ -83,7 +83,7 @@ struct RecordingOverlayView: View {
 
   private var statusLine: String {
     switch coordinator.phase {
-    case .connecting: "Opening the line"
+    case .connecting: "Listening"
     case .recording:
       if let target = coordinator.targetApplication?.name {
         "Listening for \(target)"
@@ -115,7 +115,7 @@ struct RecordingOverlayView: View {
 
   private var placeholderTranscript: String {
     switch coordinator.phase {
-    case .connecting: "Start speaking…"
+    case .connecting: "Listening…"
     case .finishing: "Checking last words…"
     case .delivered: "Done"
     default: "Listening…"

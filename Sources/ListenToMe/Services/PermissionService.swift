@@ -62,8 +62,8 @@ final class PermissionService: ObservableObject {
     }
   }
 
-  /// Prompt (once per launch) and open the Accessibility pane. Paste cannot
-  /// work without this — dictation should not start until it returns true.
+  /// Prompt (once per launch) and open the Accessibility pane.
+  /// Returns immediately after prompting — never sleep on the hotkey path.
   @discardableResult
   func ensureAccessibilityForPaste(promptIfNeeded: Bool = true) async -> Bool {
     refresh()
@@ -74,16 +74,10 @@ final class PermissionService: ObservableObject {
       let options =
         [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
       _ = AXIsProcessTrustedWithOptions(options)
+      openAccessibilitySettings()
     }
-    openAccessibilitySettings()
-
-    // Give the user a short window to flip the toggle before we fail loudly.
-    for _ in 0..<8 {
-      try? await Task.sleep(nanoseconds: 400_000_000)
-      refresh()
-      if accessibilityGranted { return true }
-    }
-    return false
+    refresh()
+    return accessibilityGranted
   }
 
   func openAccessibilitySettings() {

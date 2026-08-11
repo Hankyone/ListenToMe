@@ -64,8 +64,8 @@ final class RecordingCoordinator: ObservableObject {
   func start() async {
     guard !phase.isBusy else { return }
 
-    // Show the overlay and grab the target app before any slow work so the
-    // first spoken words aren't lost to media-pause scripts / websocket setup.
+    // Hotkey path must feel instant (Handy/VoiceInk): overlay + mic first,
+    // never await permission sheets / Settings / websocket before capture.
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -110,29 +110,26 @@ final class RecordingCoordinator: ObservableObject {
       }
     }
 
-    // Without Accessibility, transcripts only land on the clipboard — the
-    // whole product feels broken. Block start until paste is allowed.
+    // Instant check only — never poll/open Settings on the hotkey path.
     if !permissions.accessibilityGranted {
-      let granted = await permissions.ensureAccessibilityForPaste()
-      guard granted else {
-        fail(
-          "Accessibility is off, so text can’t be pasted into the focused field. Enable ListenToMe in System Settings → Privacy & Security → Accessibility, quit ListenToMe from the menu bar, reopen it, then try again."
-        )
-        return
-      }
+      permissions.openAccessibilitySettings()
+      fail(
+        "Accessibility is off, so text can’t be pasted into the focused field. Enable ListenToMe in System Settings → Privacy & Security → Accessibility, quit ListenToMe from the menu bar, reopen it, then try again."
+      )
+      return
     }
 
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
 
+      // Mic before network. Phase flips to recording as soon as capture is live.
       if usesBatchTranscription {
         try startBatchCapture(recordingURL: recordingURL)
+        phase = .recording
       } else {
         try startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       }
-
-      phase = .recording
 
       // Duck media only after the mic is live — AppleScript must never delay capture.
       Task { @MainActor [weak self] in
@@ -150,6 +147,17 @@ final class RecordingCoordinator: ObservableObject {
       await cleanUpConnection()
       discardCurrentRecording()
       fail(error.localizedDescription)
+    }
+  }
+
+  /// Warm the HAL graph so the next hotkey doesn't pay cold-start latency.
+  func prepareMicrophone() {
+    permissions.refresh()
+    guard permissions.microphoneGranted else { return }
+    do {
+      try audioCapture.prepare(deviceUID: settings.preferredMicrophoneUID())
+    } catch {
+      // Warm-up is best-effort — cold start still works.
     }
   }
 
@@ -274,35 +282,24 @@ final class RecordingCoordinator: ObservableObject {
     let client = RealtimeTranscriptionClient(apiKey: apiKey)
     self.client = client
 
-    let streamPair = AsyncStream<Data>.makeStream()
+    let streamPair = AsyncStream<Data>.makeStream(
+      bufferingPolicy: .unbounded
+    )
     audioContinuation = streamPair.continuation
 
     var configuration = settings.transcriptionConfiguration
     configuration.targetAppName = targetApplication?.name
 
-    audioSendTask = Task { [weak self] in
-      do {
-        try await client.connect(configuration: configuration) {
-          [weak self] event in
-          self?.handle(event)
-        }
-        for await chunk in streamPair.stream {
-          try Task.checkCancellation()
-          try await client.appendAudio(chunk)
-        }
-      } catch is CancellationError {
-        return
-      } catch {
-        await MainActor.run { [weak self] in
-          self?.fail(error.localizedDescription)
-        }
-      }
-    }
+    // Counts PCM chunks queued before the websocket is ready so we can pace
+    // only that backlog (not live speech after the handshake).
+    let backlog = BacklogCounter()
 
+    // Open the mic first so speech is never blocked on websocket handshake.
     try audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { [weak self] data in
+        backlog.noteQueued()
         self?.audioContinuation?.yield(data)
       },
       onLevel: { [weak self] level in
@@ -316,6 +313,35 @@ final class RecordingCoordinator: ObservableObject {
         }
       }
     )
+    phase = .recording
+
+    audioSendTask = Task { [weak self] in
+      do {
+        try await client.connect(configuration: configuration) {
+          [weak self] event in
+          self?.handle(event)
+        }
+
+        // Pace pre-handshake audio at realtime (~40ms/chunk). Live audio
+        // after that is forwarded immediately.
+        var remainingBacklog = backlog.snapshotAndStopCounting()
+        let chunkDurationNs: UInt64 = 40_000_000
+        for await chunk in streamPair.stream {
+          try Task.checkCancellation()
+          try await client.appendAudio(chunk)
+          if remainingBacklog > 0 {
+            remainingBacklog -= 1
+            try? await Task.sleep(nanoseconds: chunkDurationNs)
+          }
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        await MainActor.run { [weak self] in
+          self?.fail(error.localizedDescription)
+        }
+      }
+    }
   }
 
   private func startBatchCapture(recordingURL: URL) throws {
@@ -593,5 +619,26 @@ final class RecordingCoordinator: ObservableObject {
     startedAt = nil
     targetApplication = nil
     usesBatchTranscription = false
+  }
+}
+
+/// Thread-safe count of PCM chunks produced before the realtime session is ready.
+private final class BacklogCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+  private var counting = true
+
+  func noteQueued() {
+    lock.lock()
+    defer { lock.unlock() }
+    guard counting else { return }
+    count += 1
+  }
+
+  func snapshotAndStopCounting() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    counting = false
+    return count
   }
 }

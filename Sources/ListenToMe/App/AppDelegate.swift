@@ -71,15 +71,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     configureHotkey()
 
-    // Paste is core. Surface Accessibility early instead of silently
-    // copying every transcript to the clipboard.
+    // Warm the mic graph (VoiceInk prepare / Handy keep-alive). Soft-prompt
+    // Accessibility off the hotkey path so paste is ready without start lag.
     Task { @MainActor [weak self] in
-      try? await Task.sleep(nanoseconds: 800_000_000)
+      try? await Task.sleep(nanoseconds: 500_000_000)
       guard let self else { return }
       self.model.permissions.refresh()
       if !self.model.permissions.accessibilityGranted {
-        _ = await self.model.permissions.ensureAccessibilityForPaste()
+        _ = await self.model.permissions.ensureAccessibilityForPaste(promptIfNeeded: true)
       }
+      self.model.recording.prepareMicrophone()
     }
   }
 
@@ -103,6 +104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       .removeDuplicates()
       .sink { [weak self] spec in
         self?.applyHotkey(spec)
+      }
+      .store(in: &subscriptions)
+
+    model.settings.$microphonePriorityUIDs
+      .dropFirst()
+      .removeDuplicates()
+      .sink { [weak self] _ in
+        self?.model.recording.prepareMicrophone()
       }
       .store(in: &subscriptions)
 
@@ -145,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     case .idle, .delivered, .failed:
       pressStartedRecording = true
       pressAt = Date()
+      // Paint the overlay on the hotkey thread before any async start work.
+      if model.settings.showRecordingOverlay {
+        overlayController?.update(for: .connecting, enabled: true)
+      }
       Task {
         await model.recording.start()
       }
