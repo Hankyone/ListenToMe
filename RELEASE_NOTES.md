@@ -1,3 +1,3 @@
-## ListenToMe 0.3.16
+## ListenToMe 0.3.17
 
-- Update changelog appears immediately (markdown notes, no WKWebView spinner)
+- Accessibility status updates after you grant it in System Settings (no more stuck “Not allowed”)

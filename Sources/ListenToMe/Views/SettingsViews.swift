@@ -39,6 +39,10 @@ struct SettingsContentView: View {
       keyStatus = ""
       settings.refreshAPIKeyPresence()
       permissions.refresh()
+      permissions.startVisibilityMonitoring()
+    }
+    .onDisappear {
+      permissions.stopVisibilityMonitoring()
     }
     .onReceive(
       NotificationCenter.default.publisher(
@@ -228,7 +232,7 @@ struct SettingsContentView: View {
     SettingsSection(title: "Mac permissions") {
       VStack(alignment: .leading, spacing: 16) {
         Text(
-          "Grant opens the right System Settings pane. For Accessibility, a floating panel lets you drag ListenToMe into the list."
+          "Grant opens the right System Settings pane. For Accessibility, a floating panel lets you drag ListenToMe into the list. Status refreshes automatically when you flip the toggle — if it still says Not allowed after enabling ListenToMe, quit from the menu bar and reopen."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
@@ -350,6 +354,9 @@ private struct PermissionGuidanceRow: View {
         )
       }
       .buttonStyle(.plain)
+      // Remount when our observed grant flips so PermissionFlow's button
+      // label doesn't stay stuck on the pre-grant state.
+      .id("\(pane)-\(granted)")
     }
   }
 }
