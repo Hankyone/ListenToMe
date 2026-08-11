@@ -110,6 +110,18 @@ final class RecordingCoordinator: ObservableObject {
       }
     }
 
+    // Without Accessibility, transcripts only land on the clipboard — the
+    // whole product feels broken. Block start until paste is allowed.
+    if !permissions.accessibilityGranted {
+      let granted = await permissions.ensureAccessibilityForPaste()
+      guard granted else {
+        fail(
+          "Accessibility is off, so text can’t be pasted into the focused field. Enable ListenToMe in System Settings → Privacy & Security → Accessibility, quit ListenToMe from the menu bar, reopen it, then try again."
+        )
+        return
+      }
+    }
+
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
@@ -435,7 +447,16 @@ final class RecordingCoordinator: ObservableObject {
     await client?.disconnect()
     client = nil
 
-    let outcome = await delivery.deliver(finalText, to: targetApplication)
+    var outcome = await delivery.deliver(finalText, to: targetApplication)
+    if outcome == .copiedNoAccessibility {
+      // Last-chance recovery if TCC flipped mid-session or trust was stale.
+      if await permissions.ensureAccessibilityForPaste() {
+        outcome = await delivery.deliver(finalText, to: targetApplication)
+      } else {
+        permissions.openAccessibilitySettings()
+      }
+    }
+
     let duration = max(0, Date().timeIntervalSince(startedAt ?? Date()))
     let entry = HistoryEntry(
       id: UUID(),
@@ -452,6 +473,15 @@ final class RecordingCoordinator: ObservableObject {
     liveDraft.applyCompleted(finalText)
     isHandsFreeLocked = false
     mediaPause.end()
+
+    if outcome == .copiedNoAccessibility {
+      errorMessage =
+        "Transcript is on the clipboard, but paste access is off. Enable ListenToMe under Accessibility, quit and reopen this app, then paste with ⌘V or dictate again."
+      phase = .failed
+      resetRecordingReferences()
+      return
+    }
+
     phase = .delivered(outcome)
     resetRecordingReferences()
 

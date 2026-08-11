@@ -70,6 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     configureHotkey()
+
+    // Paste is core. Surface Accessibility early instead of silently
+    // copying every transcript to the clipboard.
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: 800_000_000)
+      guard let self else { return }
+      self.model.permissions.refresh()
+      if !self.model.permissions.accessibilityGranted {
+        _ = await self.model.permissions.ensureAccessibilityForPaste()
+      }
+    }
   }
 
   private func configureHotkey() {

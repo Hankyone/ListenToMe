@@ -1,5 +1,4 @@
-## ListenToMe 0.3.22
+## ListenToMe 0.3.23
 
-- Status menu icons show again (and History / Words are in the menu)
-- Prefer microphones in order — docked USB first, built-in when you’re away
-- Writing guidance, languages, and response timing live under Words with custom vocabulary
+- Fix paste: dictation no longer runs without Accessibility — that was why text never entered the field
+- Prompt for Accessibility on launch and when you try to dictate; open the System Settings pane automatically

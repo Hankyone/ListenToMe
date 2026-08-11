@@ -424,9 +424,8 @@ private struct PermissionGuidanceRow: View {
         suggestedAppURLs: [appURL],
         configuration: PermissionFlowConfiguration(
           requiredAppURLs: [appURL],
-          // Don't also show the system "Open System Settings" sheet —
-          // PermissionFlow already opens the Accessibility pane.
-          promptForAccessibilityTrust: false
+          // Also show the system trust prompt so the app appears in the list.
+          promptForAccessibilityTrust: true
         )
       ) { state in
         HStack(spacing: 6) {

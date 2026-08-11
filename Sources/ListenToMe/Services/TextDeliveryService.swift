@@ -30,9 +30,10 @@ final class TextDeliveryService {
     // wiping the payload before Cmd+V landed.
     copy(text)
 
+    let trusted = PermissionService.isAccessibilityTrusted()
     let attempt = DeliveryPolicy.canAttemptPaste(
       target: target,
-      hasAccessibilityPermission: AXIsProcessTrusted()
+      hasAccessibilityPermission: trusted
     )
     guard attempt == .pasted, let target else {
       return attempt
@@ -126,7 +127,7 @@ final class TextDeliveryService {
 
   /// Insert by replacing the current selection / empty selection (Hex).
   private func insertTextViaAccessibility(_ text: String) -> Bool {
-    guard AXIsProcessTrusted() else { return false }
+    guard PermissionService.isAccessibilityTrusted() else { return false }
 
     let systemWide = AXUIElementCreateSystemWide()
     var focusedObject: CFTypeRef?
@@ -180,7 +181,7 @@ final class TextDeliveryService {
   /// Cmd+V via CGEvent. Uses physical V key code 9 so QWERTY-⌘ layouts work
   /// (VoiceInk). Small gaps between events match VoiceInk's CursorPaster.
   private func postPasteShortcut() async -> Bool {
-    guard AXIsProcessTrusted() else { return false }
+    guard PermissionService.isAccessibilityTrusted() else { return false }
 
     let source =
       CGEventSource(stateID: .combinedSessionState)

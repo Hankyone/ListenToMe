@@ -11,10 +11,10 @@ final class PermissionService: ObservableObject {
   @Published private(set) var accessibilityGranted = false
 
   private let microphoneProvider = MicrophonePermissionStatusProvider()
-  private let accessibilityProvider = AccessibilityPermissionStatusProvider()
   private var accessibilityChangeObserver: NSObjectProtocol?
   private var visibilityPollTask: Task<Void, Never>?
   private var pendingAccessibilityRechecks: Task<Void, Never>?
+  private var didPromptAccessibilityThisLaunch = false
 
   init() {
     refresh()
@@ -30,7 +30,7 @@ final class PermissionService: ObservableObject {
 
   func refresh() {
     microphoneGranted = microphoneProvider.authorizationState() == .granted
-    accessibilityGranted = readAccessibilityTrusted()
+    accessibilityGranted = Self.isAccessibilityTrusted()
   }
 
   /// Call while Setup is on screen. Menu-bar apps often never become key
@@ -62,18 +62,42 @@ final class PermissionService: ObservableObject {
     }
   }
 
-  /// Prefer the non-prompting options API; fall back to the simple check and
-  /// PermissionFlow's provider (they can disagree briefly after a toggle).
-  private func readAccessibilityTrusted() -> Bool {
+  /// Prompt (once per launch) and open the Accessibility pane. Paste cannot
+  /// work without this — dictation should not start until it returns true.
+  @discardableResult
+  func ensureAccessibilityForPaste(promptIfNeeded: Bool = true) async -> Bool {
+    refresh()
+    if accessibilityGranted { return true }
+
+    if promptIfNeeded, !didPromptAccessibilityThisLaunch {
+      didPromptAccessibilityThisLaunch = true
+      let options =
+        [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+      _ = AXIsProcessTrustedWithOptions(options)
+    }
+    openAccessibilitySettings()
+
+    // Give the user a short window to flip the toggle before we fail loudly.
+    for _ in 0..<8 {
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      refresh()
+      if accessibilityGranted { return true }
+    }
+    return false
+  }
+
+  func openAccessibilitySettings() {
+    NSWorkspace.shared.open(PermissionFlowPane.accessibility.settingsURL)
+  }
+
+  /// Source of truth for paste / AX insert. Do not trust UI caches alone.
+  static func isAccessibilityTrusted() -> Bool {
     let options =
       [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
     if AXIsProcessTrustedWithOptions(options) {
       return true
     }
-    if AXIsProcessTrusted() {
-      return true
-    }
-    return accessibilityProvider.authorizationState() == .granted
+    return AXIsProcessTrusted()
   }
 
   private func observeAccessibilityAPIChanges() {
