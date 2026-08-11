@@ -14,13 +14,16 @@ struct SettingsContentView: View {
       VStack(alignment: .leading, spacing: 30) {
         VStack(alignment: .leading, spacing: 7) {
           Text("One model. Your words.")
-            .font(.system(size: 28, weight: .semibold))
+            .font(.system(size: 22, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
+            .lineLimit(2)
+            .minimumScaleFactor(0.85)
           Text(
             "Your own API key, light polish, and a history you can replay or reprocess."
           )
           .font(.system(size: 13))
           .foregroundStyle(AppTheme.secondaryText)
+          .fixedSize(horizontal: false, vertical: true)
         }
 
         keySection
@@ -28,9 +31,10 @@ struct SettingsContentView: View {
         voiceSection
         permissionsSection
       }
-      .padding(30)
+      .padding(24)
+      .frame(maxWidth: 720, alignment: .leading)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: 720, alignment: .leading)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(AppTheme.background)
     .onAppear {

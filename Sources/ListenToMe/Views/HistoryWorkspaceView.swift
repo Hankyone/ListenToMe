@@ -7,20 +7,42 @@ struct HistoryWorkspaceView: View {
   let hotkeyDisplay: String
 
   var body: some View {
-    HSplitView {
-      HistoryListView(
-        history: history,
-        selectedID: $selectedID,
-        hotkeyDisplay: hotkeyDisplay
-      )
-      .frame(minWidth: 280, idealWidth: 330, maxWidth: 390)
+    GeometryReader { proxy in
+      let narrow = proxy.size.width < 700
+      if narrow {
+        // In a tight window, stack list above detail instead of clipping.
+        VSplitView {
+          HistoryListView(
+            history: history,
+            selectedID: $selectedID,
+            hotkeyDisplay: hotkeyDisplay
+          )
+          .frame(minHeight: 160, idealHeight: proxy.size.height * 0.38)
 
-      HistoryDetailView(
-        history: history,
-        selectedID: $selectedID,
-        recording: recording
-      )
-      .frame(minWidth: 440)
+          HistoryDetailView(
+            history: history,
+            selectedID: $selectedID,
+            recording: recording
+          )
+          .frame(minHeight: 220)
+        }
+      } else {
+        HSplitView {
+          HistoryListView(
+            history: history,
+            selectedID: $selectedID,
+            hotkeyDisplay: hotkeyDisplay
+          )
+          .frame(minWidth: 200, idealWidth: 280, maxWidth: 360)
+
+          HistoryDetailView(
+            history: history,
+            selectedID: $selectedID,
+            recording: recording
+          )
+          .frame(minWidth: 300)
+        }
+      }
     }
     .background(AppTheme.background)
   }
@@ -33,19 +55,6 @@ private struct HistoryListView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(alignment: .firstTextBaseline) {
-        Text("History")
-          .font(.system(size: 24, weight: .semibold))
-          .foregroundStyle(AppTheme.primaryText)
-        Spacer()
-        Text("\(history.entries.count)")
-          .font(.system(size: 12, weight: .medium, design: .monospaced))
-          .foregroundStyle(AppTheme.faintText)
-      }
-      .padding(.horizontal, 18)
-      .padding(.top, 20)
-      .padding(.bottom, 10)
-
       if history.entries.isEmpty {
         EmptyHistoryView(hotkeyDisplay: hotkeyDisplay)
       } else {
@@ -120,12 +129,16 @@ private struct EmptyHistoryView: View {
   let hotkeyDisplay: String
 
   var body: some View {
-    VStack(spacing: 18) {
-      SpeechToCursorMark()
-        .frame(width: 78, height: 42)
-      Text("Your words land here.")
-        .font(.system(size: 18, weight: .semibold))
-        .foregroundStyle(AppTheme.primaryText)
+    ContentUnavailableView {
+      Label {
+        Text("Your words land here.")
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundStyle(AppTheme.primaryText)
+      } icon: {
+        SpeechToCursorMark()
+          .frame(width: 78, height: 42)
+      }
+    } description: {
       Text(
         "Press \(hotkeyDisplay), speak, then release. Space locks hands-free; press the shortcut again to finish."
       )
@@ -151,14 +164,14 @@ private struct HistoryDetailView: View {
         detail(entry)
           .id(entry.id)
       } else {
-        VStack(spacing: 12) {
-          Text("Choose a recording")
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(AppTheme.primaryText)
-          Text("The transcript and original audio will appear here.")
-            .font(.system(size: 13))
-            .foregroundStyle(AppTheme.secondaryText)
-        }
+        ContentUnavailableView(
+          "Choose a recording",
+          systemImage: "waveform",
+          description: Text(
+            "The transcript and original audio will appear here."
+          )
+        )
+        .foregroundStyle(AppTheme.primaryText)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
@@ -176,64 +189,26 @@ private struct HistoryDetailView: View {
     let isReprocessing = recording.reprocessingID == entry.id
 
     return VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .top, spacing: 18) {
-        VStack(alignment: .leading, spacing: 5) {
-          Text(
-            entry.createdAt.formatted(
-              date: .abbreviated,
-              time: .shortened
-            )
+      VStack(alignment: .leading, spacing: 5) {
+        Text(
+          entry.createdAt.formatted(
+            date: .abbreviated,
+            time: .shortened
           )
-          .font(.system(size: 22, weight: .semibold))
-          .foregroundStyle(AppTheme.primaryText)
-          Text(detailLine(for: entry))
-            .font(.system(size: 12))
-            .foregroundStyle(AppTheme.secondaryText)
-        }
-
-        Spacer()
-
-        Button {
-          recording.copyTranscript(entry.transcript)
-          didJustCopy = true
-          Task {
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
-            didJustCopy = false
-          }
-        } label: {
-          Label(
-            didJustCopy ? "Copied" : "Copy",
-            systemImage: didJustCopy ? "checkmark" : "doc.on.doc"
-          )
-        }
-        .buttonStyle(QuietButtonStyle())
-        .disabled(isReprocessing)
-
-        Button {
-          Task {
-            await recording.reprocessHistoryEntry(id: entry.id)
-          }
-        } label: {
-          Label(
-            isReprocessing ? "Reprocessing…" : "Reprocess",
-            systemImage: "arrow.triangle.2.circlepath"
-          )
-        }
-        .buttonStyle(QuietButtonStyle())
-        .disabled(isReprocessing || recording.phase.isBusy)
-
-        Button {
-          history.remove(id: entry.id)
-          selectedID = history.entries.first?.id
-        } label: {
-          Label("Trash", systemImage: "trash")
-        }
-        .buttonStyle(QuietButtonStyle(isDestructive: true))
-        .disabled(isReprocessing)
+        )
+        .font(.system(size: 22, weight: .semibold))
+        .foregroundStyle(AppTheme.primaryText)
+        .lineLimit(2)
+        .minimumScaleFactor(0.85)
+        Text(detailLine(for: entry))
+          .font(.system(size: 12))
+          .foregroundStyle(AppTheme.secondaryText)
+          .lineLimit(2)
       }
-      .padding(.horizontal, 28)
-      .padding(.top, 26)
-      .padding(.bottom, 18)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 24)
+      .padding(.top, 20)
+      .padding(.bottom, 14)
 
       VStack(alignment: .leading, spacing: 8) {
         Text("Original recording")
@@ -244,7 +219,7 @@ private struct HistoryDetailView: View {
           duration: entry.duration
         )
       }
-      .padding(.horizontal, 28)
+      .padding(.horizontal, 24)
       .onAppear {
         playback.load(history.audioURL(for: entry))
       }
@@ -260,7 +235,7 @@ private struct HistoryDetailView: View {
       .foregroundStyle(AppTheme.primaryText)
       .scrollContentBackground(.hidden)
       .disabled(isReprocessing)
-      .padding(22)
+      .padding(18)
       .background(
         ChamferedPlate(cut: 10)
           .fill(AppTheme.surface)
@@ -269,10 +244,51 @@ private struct HistoryDetailView: View {
               .fill(AppTheme.plateSheen)
           )
       )
-      .padding(.horizontal, 28)
-      .padding(.top, 14)
-      .padding(.bottom, 28)
+      .padding(.horizontal, 24)
+      .padding(.top, 12)
+      .padding(.bottom, 24)
       .opacity(isReprocessing ? 0.65 : 1)
+    }
+    .toolbar {
+      ToolbarItemGroup(placement: .primaryAction) {
+        Button {
+          recording.copyTranscript(entry.transcript)
+          didJustCopy = true
+          Task {
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            didJustCopy = false
+          }
+        } label: {
+          Label(
+            didJustCopy ? "Copied" : "Copy",
+            systemImage: didJustCopy ? "checkmark" : "doc.on.doc"
+          )
+        }
+        .disabled(isReprocessing)
+        .help("Copy transcript")
+
+        Button {
+          Task {
+            await recording.reprocessHistoryEntry(id: entry.id)
+          }
+        } label: {
+          Label(
+            isReprocessing ? "Reprocessing…" : "Reprocess",
+            systemImage: "arrow.triangle.2.circlepath"
+          )
+        }
+        .disabled(isReprocessing || recording.phase.isBusy)
+        .help("Reprocess with current provider and writing guidance")
+
+        Button(role: .destructive) {
+          history.remove(id: entry.id)
+          selectedID = history.entries.first?.id
+        } label: {
+          Label("Trash", systemImage: "trash")
+        }
+        .disabled(isReprocessing)
+        .help("Move recording to Trash")
+      }
     }
   }
 

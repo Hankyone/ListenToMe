@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
   @ObservedObject var model: AppModel
   @ObservedObject private var recording: RecordingCoordinator
+  @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
   init(model: AppModel) {
     self.model = model
@@ -10,49 +11,70 @@ struct RootView: View {
   }
 
   var body: some View {
-    NavigationSplitView {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
       AppSidebarView(
-        selection: $model.selectedSection,
+        selection: sectionSelection,
         recording: recording,
         settings: model.settings
       )
-      .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 250)
+      .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
     } detail: {
-      detail
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.background)
+      NavigationStack {
+        detailBody
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .background(AppTheme.background)
+          .navigationTitle(model.selectedSection.title)
+          .navigationSubtitle(detailSubtitle)
+      }
     }
-    .frame(minWidth: 840, minHeight: 560)
+    .navigationSplitViewStyle(.balanced)
     .preferredColorScheme(.dark)
     .tint(AppTheme.accent)
   }
 
+  private var sectionSelection: Binding<AppSection?> {
+    Binding(
+      get: { model.selectedSection },
+      set: { model.selectedSection = $0 ?? .history }
+    )
+  }
+
+  private var detailSubtitle: String {
+    switch model.selectedSection {
+    case .history:
+      let count = model.history.entries.count
+      return count == 1 ? "1 recording" : "\(count) recordings"
+    case .vocabulary:
+      let count = model.settings.vocabulary.count
+      return count == 1 ? "1 custom word" : "\(count) custom words"
+    case .settings:
+      return model.settings.selectedEngineIsReady ? "Ready" : "Needs a key"
+    }
+  }
+
   @ViewBuilder
-  private var detail: some View {
+  private var detailBody: some View {
     VStack(spacing: 0) {
       if let message = recording.errorMessage {
         inlineNotice(message)
       }
 
-      Group {
-        switch model.selectedSection {
-        case .history:
-          HistoryWorkspaceView(
-            history: model.history,
-            selectedID: $model.selectedHistoryID,
-            recording: model.recording,
-            hotkeyDisplay: model.settings.hotkey.display
-          )
-        case .vocabulary:
-          VocabularyView(settings: model.settings)
-        case .settings:
-          SettingsContentView(
-            settings: model.settings,
-            permissions: model.permissions
-          )
-        }
+      switch model.selectedSection {
+      case .history:
+        HistoryWorkspaceView(
+          history: model.history,
+          selectedID: $model.selectedHistoryID,
+          recording: model.recording,
+          hotkeyDisplay: model.settings.hotkey.display
+        )
+      case .vocabulary:
+        VocabularyView(settings: model.settings)
+      case .settings:
+        SettingsContentView(
+          settings: model.settings,
+          permissions: model.permissions
+        )
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
@@ -92,19 +114,31 @@ struct RootView: View {
 }
 
 private struct AppSidebarView: View {
-  @Binding var selection: AppSection
+  @Binding var selection: AppSection?
   @ObservedObject var recording: RecordingCoordinator
   @ObservedObject var settings: SettingsStore
 
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 13) {
+    List(selection: $selection) {
+      Section {
+        ForEach(AppSection.allCases) { section in
+          Label(section.title, systemImage: section.symbolName)
+            .tag(section)
+        }
+      }
+    }
+    .listStyle(.sidebar)
+    .scrollContentBackground(.hidden)
+    .background(AppTheme.sidebar)
+    .safeAreaInset(edge: .top, spacing: 0) {
+      HStack(spacing: 12) {
         SpeechToCursorMark()
-          .frame(width: 56, height: 32)
+          .frame(width: 44, height: 26)
         VStack(alignment: .leading, spacing: 2) {
           Text("ListenToMe")
-            .font(.system(size: 16, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
+            .lineLimit(1)
           Text(sidebarStatus)
             .font(.system(size: 11))
             .foregroundStyle(
@@ -112,41 +146,35 @@ private struct AppSidebarView: View {
                 ? AppTheme.accent
                 : AppTheme.secondaryText
             )
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
             .contentTransition(.opacity)
             .animation(.easeOut(duration: 0.18), value: sidebarStatus)
         }
+        Spacer(minLength: 0)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.horizontal, 18)
-      .padding(.top, 20)
-      .padding(.bottom, 22)
-
-      VStack(spacing: 3) {
-        ForEach(AppSection.allCases) { section in
-          SidebarRow(
-            section: section,
-            isSelected: selection == section
-          ) {
-            selection = section
-          }
-        }
-      }
-      .padding(.horizontal, 10)
-
-      Spacer(minLength: 0)
-
-      VStack(alignment: .leading, spacing: 5) {
+      .padding(.horizontal, 14)
+      .padding(.top, 14)
+      .padding(.bottom, 10)
+      .background(AppTheme.sidebar)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(alignment: .leading, spacing: 4) {
         Text(settings.hotkey.display)
           .font(.system(size: 12, weight: .semibold, design: .monospaced))
           .foregroundStyle(AppTheme.secondaryText)
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
         Text("Start or stop from any app")
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.faintText)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(18)
+      .padding(14)
+      .background(AppTheme.sidebar)
     }
-    .background(AppTheme.sidebar)
   }
 
   private var sidebarStatus: String {
@@ -157,48 +185,5 @@ private struct AppSidebarView: View {
     case .delivered: "Delivered"
     default: "Ready for dictation"
     }
-  }
-}
-
-private struct SidebarRow: View {
-  let section: AppSection
-  let isSelected: Bool
-  let action: () -> Void
-  @State private var isHovering = false
-
-  var body: some View {
-    Button(action: action) {
-      HStack(spacing: 10) {
-        Image(systemName: section.symbolName)
-          .font(.system(size: 13, weight: .medium))
-          .foregroundStyle(
-            isSelected ? AppTheme.accent : AppTheme.secondaryText
-          )
-          .frame(width: 18)
-        Text(section.title)
-          .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-          .foregroundStyle(
-            isSelected ? AppTheme.primaryText : AppTheme.secondaryText
-          )
-        Spacer(minLength: 0)
-      }
-      .padding(.horizontal, 10)
-      .padding(.vertical, 7)
-      .background(
-        ChamferedPlate(cut: 6)
-          .fill(
-            isSelected
-              ? AppTheme.raisedSurface
-              : (isHovering ? AppTheme.surface : Color.clear)
-          )
-      )
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .onHover { hovering in
-      isHovering = hovering
-    }
-    .animation(.easeOut(duration: 0.12), value: isHovering)
-    .accessibilityAddTraits(isSelected ? .isSelected : [])
   }
 }

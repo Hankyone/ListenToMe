@@ -1,4 +1,5 @@
-## ListenToMe 0.3.13
+## ListenToMe 0.3.14
 
-- Replaced the menu-bar popover (and its ugly arrow) with a quiet rounded panel
-- Error notices no longer steal keyboard focus, and auto-dismiss after a few seconds
+- Modern NavigationSplitView shell with a stable sidebar toggle and navigation titles
+- History, Words, and Setup adapt to the current window size instead of clipping or jumping
+- History actions live in the toolbar; tight windows stack list and detail instead of overflowing

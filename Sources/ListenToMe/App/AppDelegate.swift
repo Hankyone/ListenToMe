@@ -475,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     } else {
       let rootView = RootView(model: model)
       let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 660),
+        contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
         styleMask: [
           .titled,
           .closable,
@@ -487,9 +487,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defer: false
       )
       window.title = "ListenToMe"
-      window.minSize = NSSize(width: 840, height: 560)
+      // Flexible SwiftUI columns must be able to live at this size.
+      window.minSize = NSSize(width: 720, height: 480)
       window.titlebarAppearsTransparent = false
-      window.toolbarStyle = .unifiedCompact
+      window.toolbarStyle = .unified
       window.contentView = NSHostingView(rootView: rootView)
       window.center()
       window.setFrameAutosaveName("ListenToMe.MainWindow")

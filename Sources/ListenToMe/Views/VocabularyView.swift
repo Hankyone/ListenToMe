@@ -11,88 +11,66 @@ struct VocabularyView: View {
     VStack(alignment: .leading, spacing: 0) {
       VStack(alignment: .leading, spacing: 8) {
         Text("Words worth getting right.")
-          .font(.system(size: 28, weight: .semibold))
+          .font(.system(size: 22, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
+          .lineLimit(2)
+          .minimumScaleFactor(0.85)
         Text(
           "Names and product terms are sent as hints with every dictation. They are not hard replacements."
         )
         .font(.system(size: 13))
         .foregroundStyle(AppTheme.secondaryText)
-        .frame(maxWidth: 650, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(.horizontal, 30)
-      .padding(.top, 28)
-      .padding(.bottom, 22)
+      .padding(.horizontal, 24)
+      .padding(.top, 18)
+      .padding(.bottom, 16)
 
-      HStack(alignment: .top, spacing: 12) {
-        VStack(alignment: .leading, spacing: 6) {
-          ThemedTextField(
-            placeholder: "Correct spelling, such as Claude",
-            text: $term,
-            onSubmit: addWord
-          )
-          ThemedTextField(
-            placeholder: "Often heard as, such as cloud",
-            text: $oftenHeardAs,
-            onSubmit: addWord
-          )
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 12) {
+          addFields
+          addButton
         }
-
-        Button("Add Word") {
-          addWord()
+        VStack(alignment: .leading, spacing: 10) {
+          addFields
+          addButton
         }
-        .buttonStyle(RecordActionButtonStyle())
-        .disabled(term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
-      .padding(.horizontal, 30)
+      .padding(.horizontal, 24)
 
       if !validationMessage.isEmpty {
         Text(validationMessage)
           .font(.system(size: 12))
           .foregroundStyle(AppTheme.accent)
-          .padding(.horizontal, 30)
+          .padding(.horizontal, 24)
           .padding(.top, 8)
       }
 
       if settings.vocabulary.isEmpty {
-        VStack(spacing: 15) {
-          Text("No custom words yet")
-            .font(.system(size: 18, weight: .semibold))
-            .foregroundStyle(AppTheme.primaryText)
-          Text(
+        ContentUnavailableView(
+          "No custom words yet",
+          systemImage: "text.book.closed",
+          description: Text(
             "Start with your name, company names, and the products you mention most."
           )
-          .font(.system(size: 13))
-          .foregroundStyle(AppTheme.secondaryText)
-          .multilineTextAlignment(.center)
-        }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(30)
+        .padding(24)
       } else {
         List(settings.vocabulary) { item in
-          HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(item.term)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(AppTheme.primaryText)
-              if !item.oftenHeardAs.isEmpty {
-                Text("May sound like “\(item.oftenHeardAs)”")
-                  .font(.system(size: 12))
-                  .foregroundStyle(AppTheme.secondaryText)
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+              vocabularyText(item)
+              Spacer(minLength: 8)
+              vocabularyActions(item)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+              vocabularyText(item)
+              HStack(spacing: 10) {
+                vocabularyActions(item)
+                Spacer(minLength: 0)
               }
             }
-            Spacer()
-            Button("Edit") {
-              editingItem = item
-            }
-            .buttonStyle(QuietButtonStyle())
-            Button {
-              settings.removeVocabulary(id: item.id)
-            } label: {
-              Image(systemName: "trash")
-            }
-            .buttonStyle(QuietButtonStyle(isDestructive: true))
-            .accessibilityLabel("Delete \(item.term)")
           }
           .padding(.vertical, 8)
           .listRowSeparator(.hidden)
@@ -100,14 +78,69 @@ struct VocabularyView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        .padding(.top, 18)
+        .padding(.top, 14)
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(AppTheme.background)
     .sheet(item: $editingItem) { item in
       VocabularyEditorSheet(item: item) { updated in
         settings.updateVocabulary(updated)
       }
+    }
+  }
+
+  private var addFields: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      ThemedTextField(
+        placeholder: "Correct spelling, such as Claude",
+        text: $term,
+        onSubmit: addWord
+      )
+      ThemedTextField(
+        placeholder: "Often heard as, such as cloud",
+        text: $oftenHeardAs,
+        onSubmit: addWord
+      )
+    }
+  }
+
+  private var addButton: some View {
+    Button("Add Word") {
+      addWord()
+    }
+    .buttonStyle(RecordActionButtonStyle())
+    .disabled(term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+  }
+
+  private func vocabularyText(_ item: VocabularyItem) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(item.term)
+        .font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(AppTheme.primaryText)
+        .lineLimit(2)
+      if !item.oftenHeardAs.isEmpty {
+        Text("May sound like “\(item.oftenHeardAs)”")
+          .font(.system(size: 12))
+          .foregroundStyle(AppTheme.secondaryText)
+          .lineLimit(2)
+      }
+    }
+  }
+
+  private func vocabularyActions(_ item: VocabularyItem) -> some View {
+    HStack(spacing: 8) {
+      Button("Edit") {
+        editingItem = item
+      }
+      .buttonStyle(QuietButtonStyle())
+      Button {
+        settings.removeVocabulary(id: item.id)
+      } label: {
+        Image(systemName: "trash")
+      }
+      .buttonStyle(QuietButtonStyle(isDestructive: true))
+      .accessibilityLabel("Delete \(item.term)")
     }
   }
 
