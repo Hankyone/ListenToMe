@@ -91,14 +91,17 @@ jobs:
           ZIP_NAME: ${{ steps.version.outputs.zip }}
           DMG_NAME: ${{ steps.version.outputs.dmg }}
         run: |
-          NOTES="ListenToMe ${VERSION}"
-          if [[ -f RELEASE_NOTES.md ]]; then
-            NOTES="$(cat RELEASE_NOTES.md)"
+          NOTES_FILE="release/ListenToMe-${VERSION}.md"
+          if [[ ! -f "$NOTES_FILE" ]]; then
+            echo "Missing $NOTES_FILE"
+            exit 1
           fi
+          NOTES="$(cat "$NOTES_FILE")"
           gh release create "$GITHUB_REF_NAME" \
             "release/${DMG_NAME}" \
             "release/${ZIP_NAME}" \
             "release/appcast.xml" \
+            "$NOTES_FILE" \
             --title "ListenToMe ${VERSION}" \
             --notes "$NOTES"
 

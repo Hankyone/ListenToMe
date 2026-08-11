@@ -118,19 +118,24 @@ xcrun notarytool submit "$RELEASE_DIR/$DMG_NAME" \
     --wait
 xcrun stapler staple "$RELEASE_DIR/$DMG_NAME"
 
-# Optional release notes beside the zip for generate_appcast.
-if [[ -f "$PROJECT_DIR/RELEASE_NOTES.md" ]]; then
-    cp "$PROJECT_DIR/RELEASE_NOTES.md" "$RELEASE_DIR/${APP_NAME}-${VERSION}.md"
+NOTES_MD="$PROJECT_DIR/RELEASE_NOTES.md"
+NOTES_RELEASE_MD="$RELEASE_DIR/${APP_NAME}-${VERSION}.md"
+if [[ ! -f "$NOTES_MD" ]]; then
+    print -u2 "Missing RELEASE_NOTES.md — Sparkle needs release notes for this version."
+    exit 1
 fi
+if ! grep -q "ListenToMe ${VERSION}" "$NOTES_MD"; then
+    print -u2 "RELEASE_NOTES.md must mention ListenToMe ${VERSION} before releasing."
+    exit 1
+fi
+cp "$NOTES_MD" "$NOTES_RELEASE_MD"
 
 # generate_appcast scans the folder; keep the DMG out so Sparkle only
 # publishes the zip update archive.
 SPARKLE_DIR="$RELEASE_DIR/sparkle"
 mkdir -p "$SPARKLE_DIR"
 cp "$RELEASE_DIR/$ZIP_NAME" "$SPARKLE_DIR/"
-if [[ -f "$RELEASE_DIR/${APP_NAME}-${VERSION}.md" ]]; then
-    cp "$RELEASE_DIR/${APP_NAME}-${VERSION}.md" "$SPARKLE_DIR/"
-fi
+cp "$NOTES_RELEASE_MD" "$SPARKLE_DIR/"
 
 print "Generating Sparkle appcast…"
 "$SPARKLE_TOOLS_DIR/generate_appcast" \
@@ -140,10 +145,16 @@ print "Generating Sparkle appcast…"
     "$SPARKLE_DIR"
 rm -rf "$SPARKLE_DIR"
 
+# Inline the notes so the updater never depends on a separate download URL.
+python3 "$PROJECT_DIR/Scripts/embed-appcast-notes.py" \
+    "$RELEASE_DIR/appcast.xml" \
+    "$NOTES_RELEASE_MD"
+
 print "Release artifacts ready in $RELEASE_DIR"
 print "  version: $VERSION ($BUILD)"
 print "  tag:     $TAG"
 print "  zip:     $RELEASE_DIR/$ZIP_NAME"
 print "  dmg:     $RELEASE_DIR/$DMG_NAME"
+print "  notes:   $NOTES_RELEASE_MD"
 print "  appcast: $RELEASE_DIR/appcast.xml"
 ls -lh "$RELEASE_DIR"

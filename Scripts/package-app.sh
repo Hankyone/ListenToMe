@@ -154,6 +154,10 @@ SPARKLE_B="$STAGING_DIR/Contents/Frameworks/Sparkle.framework/Versions/B"
 rm -rf "$SPARKLE_B/XPCServices" \
     "$STAGING_DIR/Contents/Frameworks/Sparkle.framework/XPCServices"
 
+# Sparkle loads UI copy from its own bundle; patch em dashes before signing.
+python3 "$PROJECT_DIR/Scripts/patch-sparkle-strings.py" \
+    "$STAGING_DIR/Contents/Frameworks/Sparkle.framework"
+
 install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "$STAGING_DIR/Contents/MacOS/ListenToMe" 2>/dev/null || true
 

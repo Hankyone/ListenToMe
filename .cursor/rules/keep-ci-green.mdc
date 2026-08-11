@@ -12,6 +12,7 @@ The maintainer does not want GitHub Actions failure emails. Treat a red workflow
 1. Run `./Scripts/ci-preflight.sh` and wait for it to pass.
 2. Do not push if preflight fails. Fix locally first.
 3. Do not tag a release until preflight passes on the exact commit you will tag.
+4. Before tagging, update `RELEASE_NOTES.md` so it mentions the exact `CFBundleShortVersionString` (release.sh fails otherwise). Appcast notes are embedded inline — do not rely on a separate notes URL.
 
 ## When adding or bumping SPM dependencies
 
