@@ -32,7 +32,9 @@ struct SettingsContentView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(AppTheme.background)
     .onAppear {
-      apiKey = (try? settings.loadAPIKey()) ?? ""
+      // Don't pull the secret out of Keychain just to populate the field —
+      // that can trigger an unlock/access prompt. Show an empty replace field.
+      apiKey = ""
       permissions.refresh()
     }
   }
@@ -65,7 +67,7 @@ struct SettingsContentView: View {
           Text(
             keyStatus.isEmpty
               ? (settings.hasAPIKey
-                ? "Saved securely in macOS Keychain"
+                ? "Saved in Keychain. Paste a new key to replace it."
                 : "Add a Platform API key to start dictating")
               : keyStatus
           )

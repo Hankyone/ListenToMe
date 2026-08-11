@@ -19,19 +19,19 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.2</string>
+	<string>0.3.3</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSHighResolutionCapable</key>
-	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>ListenToMe pauses Music, Spotify, and similar apps while you dictate, then resumes them when you finish.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ListenToMe needs microphone access to turn your speech into text.</string>
 	<key>NSPrincipalClass</key>
@@ -44,4 +44,3 @@
 	<string>Q0bx1n9WcNPBK8CZbOQZ75Xet7NyXXnNTDOyzoSwJGg=</string>
 </dict>
 </plist>
-

@@ -37,7 +37,9 @@ final class SettingsStore: ObservableObject {
     didSet { persistVocabulary() }
   }
 
-  @Published private(set) var hasAPIKey: Bool = false
+  @Published private(set) var hasAPIKey: Bool {
+    didSet { defaults.set(hasAPIKey, forKey: Keys.hasAPIKey) }
+  }
 
   private let defaults: UserDefaults
   private let keychain: KeychainStore
@@ -50,6 +52,9 @@ final class SettingsStore: ObservableObject {
     static let vocabulary = "transcription.vocabulary"
     static let micProfile = "transcription.micProfile"
     static let hotkey = "hotkey.spec"
+    /// Presence flag only — the secret itself stays in Keychain and is not
+    /// read at launch (avoids Keychain password prompts on startup).
+    static let hasAPIKey = "transcription.hasAPIKey"
   }
 
   init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
@@ -90,7 +95,7 @@ final class SettingsStore: ObservableObject {
       vocabulary = []
     }
 
-    refreshAPIKeyStatus()
+    hasAPIKey = defaults.bool(forKey: Keys.hasAPIKey)
   }
 
   var languages: [String] {
@@ -115,12 +120,17 @@ final class SettingsStore: ObservableObject {
   }
 
   func loadAPIKey() throws -> String {
-    try keychain.loadAPIKey() ?? ""
+    let value = try keychain.loadAPIKey() ?? ""
+    let present = !value.isEmpty
+    if hasAPIKey != present {
+      hasAPIKey = present
+    }
+    return value
   }
 
   func saveAPIKey(_ value: String) throws {
     try keychain.saveAPIKey(value)
-    refreshAPIKeyStatus()
+    hasAPIKey = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   func addVocabulary(term: String, oftenHeardAs: String) -> Bool {
@@ -159,10 +169,6 @@ final class SettingsStore: ObservableObject {
 
   func removeVocabulary(id: UUID) {
     vocabulary.removeAll { $0.id == id }
-  }
-
-  private func refreshAPIKeyStatus() {
-    hasAPIKey = ((try? keychain.loadAPIKey()) ?? nil)?.isEmpty == false
   }
 
   private func persistVocabulary() {

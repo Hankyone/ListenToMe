@@ -1,3 +1,4 @@
-## ListenToMe 0.3.2
+## ListenToMe 0.3.3
 
-- Cleaner DMG installer: light background for readable labels, no decorative clutter
+- Stop prompting for Keychain access on launch
+- API key is only read from Keychain when you dictate or save a new key

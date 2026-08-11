@@ -27,27 +27,17 @@ struct KeychainStore {
     }
 
     let data = Data(trimmed.utf8)
-    let query: [String: Any] = [
+    // Replace any prior item (including ones created by an older signing
+    // identity) so Keychain does not keep an ACL that prompts for a password.
+    try deleteAPIKey()
+
+    let addQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      kSecValueData as String: data,
     ]
-
-    let updateStatus = SecItemUpdate(
-      query as CFDictionary,
-      [kSecValueData as String: data] as CFDictionary
-    )
-
-    if updateStatus == errSecSuccess {
-      return
-    }
-
-    guard updateStatus == errSecItemNotFound else {
-      throw KeychainError.unhandledStatus(updateStatus)
-    }
-
-    var addQuery = query
-    addQuery[kSecValueData as String] = data
     let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
     guard addStatus == errSecSuccess else {
       throw KeychainError.unhandledStatus(addStatus)
@@ -66,6 +56,14 @@ struct KeychainStore {
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     if status == errSecItemNotFound {
+      return nil
+    }
+    // Stale items from an older signing identity (e.g. local ad-hoc builds)
+    // can fail auth against the released app. Treat that as "no key".
+    if status == errSecAuthFailed
+      || status == errSecInteractionNotAllowed
+      || status == errSecUserCanceled
+    {
       return nil
     }
     guard status == errSecSuccess else {
