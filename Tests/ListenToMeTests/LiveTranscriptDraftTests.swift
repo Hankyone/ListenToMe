@@ -10,15 +10,22 @@ final class LiveTranscriptDraftTests: XCTestCase {
     XCTAssertEqual(draft.snapshot.committed, "")
     XCTAssertEqual(draft.snapshot.tentative, "Hello ")
 
-    try? await Task.sleep(nanoseconds: 80_000_000)
-    XCTAssertEqual(draft.snapshot.committed, "Hello ")
-    XCTAssertEqual(draft.snapshot.tentative, "")
+    let stabilized = await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+      draft.snapshot.committed == "Hello " && draft.snapshot.tentative.isEmpty
+    }
+    XCTAssertTrue(stabilized, "Delta should commit after the quiet period")
   }
 
   func testNewDeltasAfterStabilizeBecomeTentativeTail() async {
     let draft = LiveTranscriptDraft(stabilizeDelayNanoseconds: 40_000_000)
     draft.applyDelta("went to the store")
-    try? await Task.sleep(nanoseconds: 70_000_000)
+
+    let stabilized = await waitUntil(timeoutNanoseconds: 1_000_000_000) {
+      draft.snapshot.committed == "went to the store"
+        && draft.snapshot.tentative.isEmpty
+    }
+    XCTAssertTrue(stabilized, "Prefix should commit before the next delta")
+
     draft.applyDelta(" correction the park")
 
     XCTAssertEqual(draft.snapshot.committed, "went to the store")
@@ -36,5 +43,18 @@ final class LiveTranscriptDraftTests: XCTestCase {
 
     XCTAssertEqual(draft.snapshot.committed, "went to the park")
     XCTAssertEqual(draft.snapshot.tentative, "")
+  }
+
+  private func waitUntil(
+    timeoutNanoseconds: UInt64,
+    pollNanoseconds: UInt64 = 5_000_000,
+    _ condition: () -> Bool
+  ) async -> Bool {
+    let started = DispatchTime.now().uptimeNanoseconds
+    while DispatchTime.now().uptimeNanoseconds - started < timeoutNanoseconds {
+      if condition() { return true }
+      try? await Task.sleep(nanoseconds: pollNanoseconds)
+    }
+    return condition()
   }
 }
