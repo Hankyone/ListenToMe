@@ -1,5 +1,5 @@
-## ListenToMe 0.3.24
+## ListenToMe 0.3.25
 
-- Hotkey starts capture like Handy/VoiceInk: overlay + mic first, no permission waits on the critical path
-- Warm microphone keep-alive (~30s) so back-to-back takes aren’t paying cold HAL spin-up
-- Live transcript no longer races through buffered audio after the websocket connects
+- Fix paste into Electron apps (T3 Code / Cursor): stop trusting fake Accessibility “insert” success and paste with Cmd+V like VoiceInk
+- Remove the audio backlog pacing that made release → finished feel stuck
+- Finish sooner when live text is already on screen

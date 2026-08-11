@@ -4,9 +4,11 @@ import Foundation
 
 /// Delivers a transcript into the user's focused field.
 ///
-/// Patterned after Handy (clipboard + Cmd+V), VoiceInk (`CursorPaster`), and
-/// Hex (`PasteboardClient`): activate the original target, try AX insert, then
-/// clipboard paste with layout-safe key codes, then AppleScript Edit → Paste.
+/// Primary path matches VoiceInk `CursorPaster` and Handy: clipboard + Cmd+V.
+/// We deliberately do **not** trust AX `kAXSelectedText` success alone — Electron
+/// apps (Cursor, T3 Code, VS Code, Slack, …) often report success while the
+/// webview never receives the text, which made history say "Pasted" with an
+/// empty field.
 @MainActor
 final class TextDeliveryService {
   private let markerType = NSPasteboard.PasteboardType(
@@ -26,8 +28,7 @@ final class TextDeliveryService {
     to target: TargetApplication?
   ) async -> DeliveryOutcome {
     // Always leave the transcript on the clipboard. Restoring the previous
-    // pasteboard races apps that paste asynchronously (Handy #502) and was
-    // wiping the payload before Cmd+V landed.
+    // pasteboard races apps that paste asynchronously (Handy #502).
     copy(text)
 
     let trusted = PermissionService.isAccessibilityTrusted()
@@ -39,17 +40,14 @@ final class TextDeliveryService {
       return attempt
     }
 
-    if !activate(target) {
-      // Still try paste — some hosts stay frontmost without a successful activate().
-    }
-    try? await Task.sleep(nanoseconds: 180_000_000)
-
-    // Retry focus briefly; activation is often async on modern macOS.
-    for _ in 0..<4 {
+    // Bring the original app forward before synthesizing keys.
+    _ = activate(target)
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    for _ in 0..<5 {
       let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
       if frontmostPID == target.processIdentifier { break }
       _ = activate(target)
-      try? await Task.sleep(nanoseconds: 80_000_000)
+      try? await Task.sleep(nanoseconds: 60_000_000)
     }
 
     let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -60,13 +58,7 @@ final class TextDeliveryService {
         hasAccessibilityPermission: true
       ) == .pasted
 
-    // 1) Direct AX insert — no key events needed (Hex).
-    if insertTextViaAccessibility(text) {
-      return .pasted
-    }
-
     if !focusOK {
-      // Leave text on clipboard so the user can paste manually.
       return .copiedFocusChanged
     }
 
@@ -76,15 +68,13 @@ final class TextDeliveryService {
       return .copiedPasteFailed
     }
 
-    try? await Task.sleep(nanoseconds: 60_000_000)
+    // VoiceInk pre-paste settle — Electron needs a beat after activate().
+    let settleNs: UInt64 = isChromiumHost(target) ? 180_000_000 : 100_000_000
+    try? await Task.sleep(nanoseconds: settleNs)
 
-    // Post Cmd+V twice with a gap — Electron/Cursor often miss the first chord.
+    // Cmd+V is the real delivery path (VoiceInk CursorPaster). Always attempt
+    // it — never trust AX selectedText success on Electron first.
     var pasted = await postPasteShortcut()
-    if pasted {
-      try? await Task.sleep(nanoseconds: 120_000_000)
-    } else {
-      pasted = await postPasteShortcut()
-    }
     if !pasted {
       pasted = pasteViaAppleScriptKeyCode()
     }
@@ -92,7 +82,12 @@ final class TextDeliveryService {
       pasted = pasteViaEditMenu()
     }
 
-    // Keep our text on the clipboard either way.
+    // Native AX insert only as a last resort, and only when we can verify the
+    // value actually contains our text (Electron lies about selectedText).
+    if !pasted {
+      pasted = insertTextViaAccessibilityVerified(text)
+    }
+
     return pasted ? .pasted : .copiedPasteFailed
   }
 
@@ -114,6 +109,16 @@ final class TextDeliveryService {
     return app.activate()
   }
 
+  private func isChromiumHost(_ target: TargetApplication) -> Bool {
+    let id = (target.bundleIdentifier ?? "").lowercased()
+    let name = target.name.lowercased()
+    let needles = [
+      "electron", "t3", "cursor", "vscode", "code", "slack", "discord",
+      "figma", "notion", "chrome", "chromium", "brave", "edge", "arc",
+    ]
+    return needles.contains { id.contains($0) || name.contains($0) }
+  }
+
   private func preparePasteboard(text: String, marker: String) -> Bool {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
@@ -125,8 +130,9 @@ final class TextDeliveryService {
     return true
   }
 
-  /// Insert by replacing the current selection / empty selection (Hex).
-  private func insertTextViaAccessibility(_ text: String) -> Bool {
+  /// AX insert with read-back verification. Unverified success is ignored —
+  /// that was the Electron false-positive that marked takes as Pasted.
+  private func insertTextViaAccessibilityVerified(_ text: String) -> Bool {
     guard PermissionService.isAccessibilityTrusted() else { return false }
 
     let systemWide = AXUIElementCreateSystemWide()
@@ -144,14 +150,6 @@ final class TextDeliveryService {
 
     let focused = focusedObject as! AXUIElement
 
-    if AXUIElementSetAttributeValue(
-      focused,
-      kAXSelectedTextAttribute as CFString,
-      text as CFTypeRef
-    ) == .success {
-      return true
-    }
-
     var settable = DarwinBoolean(false)
     if AXUIElementIsAttributeSettable(
       focused,
@@ -168,26 +166,43 @@ final class TextDeliveryService {
         ? (currentObject as? String) ?? ""
         : ""
       let combined = current + text
-      return AXUIElementSetAttributeValue(
-        focused,
-        kAXValueAttribute as CFString,
-        combined as CFTypeRef
-      ) == .success
+      guard
+        AXUIElementSetAttributeValue(
+          focused,
+          kAXValueAttribute as CFString,
+          combined as CFTypeRef
+        ) == .success
+      else {
+        return false
+      }
+
+      var verifyObject: CFTypeRef?
+      guard
+        AXUIElementCopyAttributeValue(
+          focused,
+          kAXValueAttribute as CFString,
+          &verifyObject
+        ) == .success,
+        let verified = verifyObject as? String,
+        verified.contains(text)
+      else {
+        return false
+      }
+      return true
     }
 
+    // selectedText without verification is how Electron fooled us — skip it.
     return false
   }
 
-  /// Cmd+V via CGEvent. Uses physical V key code 9 so QWERTY-⌘ layouts work
-  /// (VoiceInk). Small gaps between events match VoiceInk's CursorPaster.
+  /// Cmd+V via CGEvent — VoiceInk `CursorPaster` (privateState + hid tap).
   private func postPasteShortcut() async -> Bool {
     guard PermissionService.isAccessibilityTrusted() else { return false }
 
-    let source =
-      CGEventSource(stateID: .combinedSessionState)
-      ?? CGEventSource(stateID: .hidSystemState)
-    let commandKeyCode: CGKeyCode = 0x37  // Left ⌘
-    let vKeyCode: CGKeyCode = 0x09  // Physical V
+    let source = CGEventSource(stateID: .privateState)
+    let commandKeyCode: CGKeyCode = 0x37
+    let vKeyCode: CGKeyCode = 0x09
+    let gapNs: UInt64 = 10_000_000
 
     guard
       let cmdDown = CGEvent(
@@ -218,11 +233,13 @@ final class TextDeliveryService {
     vDown.flags = .maskCommand
     vUp.flags = .maskCommand
 
-    for event in [cmdDown, vDown, vUp, cmdUp] {
-      event.post(tap: .cghidEventTap)
-      event.post(tap: .cgSessionEventTap)
-      try? await Task.sleep(nanoseconds: 14_000_000)
-    }
+    cmdDown.post(tap: .cghidEventTap)
+    try? await Task.sleep(nanoseconds: gapNs)
+    vDown.post(tap: .cghidEventTap)
+    try? await Task.sleep(nanoseconds: gapNs)
+    vUp.post(tap: .cghidEventTap)
+    try? await Task.sleep(nanoseconds: gapNs)
+    cmdUp.post(tap: .cghidEventTap)
     return true
   }
 

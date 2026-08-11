@@ -210,7 +210,6 @@ final class RecordingCoordinator: ObservableObject {
       try await client?.commit()
     } catch {
       if partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        // Empty take — not an error.
         abandonQuietly()
       } else {
         await finalize(transcript: partialTranscript)
@@ -218,9 +217,14 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
 
+    // Prefer the final `completed` event, but don't leave the user hanging
+    // after release when we already have live text.
+    let hasLiveText =
+      !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let timeoutNs: UInt64 = hasLiveText ? 2_500_000_000 : 12_000_000_000
     finishTimeoutTask?.cancel()
     finishTimeoutTask = Task { [weak self] in
-      try? await Task.sleep(nanoseconds: 20_000_000_000)
+      try? await Task.sleep(nanoseconds: timeoutNs)
       guard let self, self.phase == .finishing else { return }
       let fallback = self.partialTranscript
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -290,16 +294,11 @@ final class RecordingCoordinator: ObservableObject {
     var configuration = settings.transcriptionConfiguration
     configuration.targetAppName = targetApplication?.name
 
-    // Counts PCM chunks queued before the websocket is ready so we can pace
-    // only that backlog (not live speech after the handshake).
-    let backlog = BacklogCounter()
-
-    // Open the mic first so speech is never blocked on websocket handshake.
+    // Mic first — speech must never wait on the websocket handshake.
     try audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { [weak self] data in
-        backlog.noteQueued()
         self?.audioContinuation?.yield(data)
       },
       onLevel: { [weak self] level in
@@ -315,24 +314,17 @@ final class RecordingCoordinator: ObservableObject {
     )
     phase = .recording
 
+    // Flush audio to OpenAI as fast as the socket allows — never pace the
+    // backlog (that made release→paste feel seconds late).
     audioSendTask = Task { [weak self] in
       do {
         try await client.connect(configuration: configuration) {
           [weak self] event in
           self?.handle(event)
         }
-
-        // Pace pre-handshake audio at realtime (~40ms/chunk). Live audio
-        // after that is forwarded immediately.
-        var remainingBacklog = backlog.snapshotAndStopCounting()
-        let chunkDurationNs: UInt64 = 40_000_000
         for await chunk in streamPair.stream {
           try Task.checkCancellation()
           try await client.appendAudio(chunk)
-          if remainingBacklog > 0 {
-            remainingBacklog -= 1
-            try? await Task.sleep(nanoseconds: chunkDurationNs)
-          }
         }
       } catch is CancellationError {
         return
@@ -619,26 +611,5 @@ final class RecordingCoordinator: ObservableObject {
     startedAt = nil
     targetApplication = nil
     usesBatchTranscription = false
-  }
-}
-
-/// Thread-safe count of PCM chunks produced before the realtime session is ready.
-private final class BacklogCounter: @unchecked Sendable {
-  private let lock = NSLock()
-  private var count = 0
-  private var counting = true
-
-  func noteQueued() {
-    lock.lock()
-    defer { lock.unlock() }
-    guard counting else { return }
-    count += 1
-  }
-
-  func snapshotAndStopCounting() -> Int {
-    lock.lock()
-    defer { lock.unlock() }
-    counting = false
-    return count
   }
 }
