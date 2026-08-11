@@ -1,5 +1,5 @@
-## ListenToMe 0.3.14
+## ListenToMe 0.3.15
 
-- Modern NavigationSplitView shell with a stable sidebar toggle and navigation titles
-- History, Words, and Setup adapt to the current window size instead of clipping or jumping
-- History actions live in the toolbar; tight windows stack list and detail instead of overflowing
+- Restored the previous sidebar/detail look (undid the awkward NavigationSplitView chrome)
+- Sidebar toggle stays fixed on the leading edge — no more teleporting toolbar button
+- Switching History / Words / Setup no longer expands the window

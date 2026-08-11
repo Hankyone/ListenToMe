@@ -475,23 +475,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     } else {
       let rootView = RootView(model: model)
       let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
+        contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 660),
         styleMask: [
           .titled,
           .closable,
           .miniaturizable,
           .resizable,
-          .unifiedTitleAndToolbar,
         ],
         backing: .buffered,
         defer: false
       )
       window.title = "ListenToMe"
-      // Flexible SwiftUI columns must be able to live at this size.
-      window.minSize = NSSize(width: 720, height: 480)
+      window.minSize = NSSize(width: 840, height: 560)
       window.titlebarAppearsTransparent = false
-      window.toolbarStyle = .unified
-      window.contentView = NSHostingView(rootView: rootView)
+      // SwiftUI's default hosting options push ideal/max sizes into the window,
+      // so switching History/Words/Setup was resizing the frame. Keep only mins.
+      let hostingView = NSHostingView(rootView: rootView)
+      hostingView.sizingOptions = [.minSize]
+      window.contentView = hostingView
       window.center()
       window.setFrameAutosaveName("ListenToMe.MainWindow")
 
