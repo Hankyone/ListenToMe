@@ -37,12 +37,10 @@ final class SettingsStore: ObservableObject {
     didSet { persistVocabulary() }
   }
 
-  @Published private(set) var hasAPIKey: Bool {
-    didSet { defaults.set(hasAPIKey, forKey: Keys.hasAPIKey) }
-  }
+  @Published private(set) var hasAPIKey: Bool = false
 
   private let defaults: UserDefaults
-  private let keychain: KeychainStore
+  private let apiKeys: APIKeyStore
 
   private enum Keys {
     static let showRecordingOverlay = "appearance.showRecordingOverlay"
@@ -52,14 +50,14 @@ final class SettingsStore: ObservableObject {
     static let vocabulary = "transcription.vocabulary"
     static let micProfile = "transcription.micProfile"
     static let hotkey = "hotkey.spec"
-    /// Presence flag only — the secret itself stays in Keychain and is not
-    /// read at launch (avoids Keychain password prompts on startup).
-    static let hasAPIKey = "transcription.hasAPIKey"
   }
 
-  init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
+  init(
+    defaults: UserDefaults = .standard,
+    apiKeys: APIKeyStore = APIKeyStore()
+  ) {
     self.defaults = defaults
-    self.keychain = keychain
+    self.apiKeys = apiKeys
     showRecordingOverlay =
       defaults.object(forKey: Keys.showRecordingOverlay) as? Bool
       ?? true
@@ -95,7 +93,8 @@ final class SettingsStore: ObservableObject {
       vocabulary = []
     }
 
-    hasAPIKey = defaults.bool(forKey: Keys.hasAPIKey)
+    // File presence only — never load the secret at launch.
+    hasAPIKey = apiKeys.hasStoredKey()
   }
 
   var languages: [String] {
@@ -120,7 +119,7 @@ final class SettingsStore: ObservableObject {
   }
 
   func loadAPIKey() throws -> String {
-    let value = try keychain.loadAPIKey() ?? ""
+    let value = try apiKeys.loadAPIKey() ?? ""
     let present = !value.isEmpty
     if hasAPIKey != present {
       hasAPIKey = present
@@ -129,7 +128,7 @@ final class SettingsStore: ObservableObject {
   }
 
   func saveAPIKey(_ value: String) throws {
-    try keychain.saveAPIKey(value)
+    try apiKeys.saveAPIKey(value)
     hasAPIKey = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 

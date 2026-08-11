@@ -32,8 +32,7 @@ struct SettingsContentView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(AppTheme.background)
     .onAppear {
-      // Don't pull the secret out of Keychain just to populate the field —
-      // that can trigger an unlock/access prompt. Show an empty replace field.
+      // Field stays empty on purpose — paste a key to set or replace it.
       apiKey = ""
       permissions.refresh()
     }
@@ -67,8 +66,8 @@ struct SettingsContentView: View {
           Text(
             keyStatus.isEmpty
               ? (settings.hasAPIKey
-                ? "Saved in Keychain. Paste a new key to replace it."
-                : "Add a Platform API key to start dictating")
+                ? "Saved in ListenToMe. Paste a new key to replace it."
+                : "Paste your OpenAI Platform API key here, then Save Key")
               : keyStatus
           )
           .font(.system(size: 12))

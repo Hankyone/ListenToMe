@@ -17,7 +17,7 @@ words land in the app you were using.
 - Live partial transcripts with custom words and language hints
 - Focus-safe pasting with automatic clipboard fallback
 - Local history with editable transcripts and replayable audio
-- API key stored in macOS Keychain
+- API key you paste in Setup, stored locally with the app
 - No accounts, analytics, cloud history, or extra model providers
 
 ## Run it

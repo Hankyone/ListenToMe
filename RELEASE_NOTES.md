@@ -1,4 +1,4 @@
-## ListenToMe 0.3.3
+## ListenToMe 0.3.4
 
-- Stop prompting for Keychain access on launch
-- API key is only read from Keychain when you dictate or save a new key
+- API key lives only in the app: paste it in Setup, ListenToMe stores it locally
+- No more macOS Keychain access for the API key

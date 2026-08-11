@@ -73,11 +73,11 @@ final class RecordingCoordinator: ObservableObject {
     do {
       apiKey = try settings.loadAPIKey()
     } catch {
-      fail("The OpenAI API key could not be read from Keychain.")
+      fail("The OpenAI API key could not be read. Paste it again in Setup.")
       return
     }
     guard !apiKey.isEmpty else {
-      fail("Add an OpenAI API key in Setup before dictating.")
+      fail("Paste an OpenAI API key in Setup before dictating.")
       return
     }
     let client = RealtimeTranscriptionClient(apiKey: apiKey)
