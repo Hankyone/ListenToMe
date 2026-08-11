@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 final class AudioCaptureService {
@@ -6,12 +7,14 @@ final class AudioCaptureService {
     case invalidInputFormat
     case converterUnavailable
     case alreadyRecording
+    case deviceUnavailable
 
     var errorDescription: String? {
       switch self {
       case .invalidInputFormat: "The selected microphone has no usable audio format."
       case .converterUnavailable: "The microphone audio could not be prepared for OpenAI."
       case .alreadyRecording: "A recording is already in progress."
+      case .deviceUnavailable: "That microphone isn’t available. Pick another in Setup."
       }
     }
   }
@@ -30,8 +33,12 @@ final class AudioCaptureService {
     interleaved: true
   )!
 
+  /// ~40ms of 24 kHz mono Int16 — snappier first bytes to the API.
+  private let targetChunkSize = 1_920
+
   func start(
     recordingURL: URL,
+    deviceUID: String = MicrophoneInput.systemDefaultID,
     onPCMChunk: @escaping (Data) -> Void,
     onLevel: @escaping (Float) -> Void,
     onError: @escaping (Error) -> Void
@@ -40,6 +47,11 @@ final class AudioCaptureService {
 
     let engine = AVAudioEngine()
     let input = engine.inputNode
+
+    if let deviceID = MicrophoneInputCatalog.deviceID(forUID: deviceUID) {
+      try selectInputDevice(deviceID, on: input)
+    }
+
     let hardwareFormat = input.inputFormat(forBus: 0)
     guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
       throw CaptureError.invalidInputFormat
@@ -66,7 +78,8 @@ final class AudioCaptureService {
     pendingPCM.removeAll(keepingCapacity: true)
     lastLevelUpdate = .distantPast
 
-    input.installTap(onBus: 0, bufferSize: 4_096, format: tapFormat) {
+    // Smaller buffer = less hardware latency before the first callback.
+    input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) {
       [weak self] buffer, _ in
       guard let self else { return }
 
@@ -77,7 +90,7 @@ final class AudioCaptureService {
         }
 
         let now = Date()
-        if now.timeIntervalSince(self.lastLevelUpdate) >= 0.06 {
+        if now.timeIntervalSince(self.lastLevelUpdate) >= 0.05 {
           self.lastLevelUpdate = now
           onLevel(Self.normalizedLevel(buffer))
         }
@@ -110,8 +123,29 @@ final class AudioCaptureService {
     _ = stop()
   }
 
+  private func selectInputDevice(
+    _ deviceID: AudioDeviceID,
+    on input: AVAudioInputNode
+  ) throws {
+    guard let audioUnit = input.audioUnit else {
+      throw CaptureError.deviceUnavailable
+    }
+    var id = deviceID
+    let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    let status = AudioUnitSetProperty(
+      audioUnit,
+      kAudioOutputUnitProperty_CurrentDevice,
+      kAudioUnitScope_Global,
+      0,
+      &id,
+      size
+    )
+    guard status == noErr else {
+      throw CaptureError.deviceUnavailable
+    }
+  }
+
   private func enqueue(_ data: Data, onPCMChunk: @escaping (Data) -> Void) {
-    let targetChunkSize = 4_800
     lock.lock()
     pendingPCM.append(data)
 

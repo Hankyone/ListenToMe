@@ -8,7 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let model = AppModel()
 
   private let hotkey = HotkeyService()
-  private let updates = UpdateService()
   private var overlayController: RecordingPanelController?
   private var historyPanelController: StatusHistoryPanelController?
   private var mainWindowController: NSWindowController?
@@ -36,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       coordinator: model.recording,
       settings: model.settings
     )
+    // Warm the floating plate so the first hotkey doesn't pay SwiftUI mount cost.
+    overlayController?.preload()
     historyPanelController = StatusHistoryPanelController(
       model: model,
       onOpenHistory: { [weak self] in
@@ -286,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
       keyEquivalent: ""
     )
-    checkForUpdates.target = updates.updaterController
+    checkForUpdates.target = model.updates.updaterController
     applicationMenu.addItem(.separator())
 
     let setup = applicationMenu.addItem(
@@ -393,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
       to: menu
     )
-    checkForUpdates.target = updates.updaterController
+    checkForUpdates.target = model.updates.updaterController
     addMenuItem(
       "Quit ListenToMe",
       symbolName: "power",

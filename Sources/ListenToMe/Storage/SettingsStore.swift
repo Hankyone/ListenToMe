@@ -24,6 +24,11 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(micProfile.rawValue, forKey: Keys.micProfile) }
   }
 
+  /// CoreAudio device UID; empty string follows the system default input.
+  @Published var microphoneDeviceUID: String {
+    didSet { defaults.set(microphoneDeviceUID, forKey: Keys.microphoneDeviceUID) }
+  }
+
   @Published var apiProvider: APIProvider {
     didSet {
       defaults.set(apiProvider.rawValue, forKey: Keys.apiProvider)
@@ -58,6 +63,7 @@ final class SettingsStore: ObservableObject {
     static let languageText = "transcription.languages"
     static let vocabulary = "transcription.vocabulary"
     static let micProfile = "transcription.micProfile"
+    static let microphoneDeviceUID = "audio.microphoneDeviceUID"
     static let apiProvider = "transcription.apiProvider"
     static let hotkey = "hotkey.spec"
   }
@@ -83,6 +89,9 @@ final class SettingsStore: ObservableObject {
       MicProfile(
         rawValue: defaults.string(forKey: Keys.micProfile) ?? ""
       ) ?? .builtIn
+    microphoneDeviceUID =
+      defaults.string(forKey: Keys.microphoneDeviceUID)
+      ?? MicrophoneInput.systemDefaultID
     apiProvider =
       APIProvider(
         rawValue: defaults.string(forKey: Keys.apiProvider) ?? ""

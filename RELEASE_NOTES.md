@@ -1,6 +1,6 @@
-## ListenToMe 0.3.20
+## ListenToMe 0.3.21
 
-- Compact recording panel with a smaller meter and more room for live text
-- History selection no longer bleeds a blue system highlight past the cards
-- Auto-remove history older than 30 days; empty takes no longer show an error
-- Accessibility grant no longer double-prompts; clearer quit-and-reopen guidance
+- Choose which microphone to use in Setup
+- Start listening immediately on hotkey (no more waiting on media-pause scripts)
+- Preload the recording panel; keep transcripts on the clipboard so paste doesn’t race
+- Check for Updates from Setup

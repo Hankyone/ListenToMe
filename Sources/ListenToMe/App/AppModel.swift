@@ -11,12 +11,14 @@ final class AppModel: ObservableObject {
   let history: HistoryStore
   let permissions: PermissionService
   let recording: RecordingCoordinator
+  let updates: UpdateService
   var onShowMainWindow: (() -> Void)?
 
   init(
     settings: SettingsStore? = nil,
     history: HistoryStore? = nil,
-    permissions: PermissionService? = nil
+    permissions: PermissionService? = nil,
+    updates: UpdateService? = nil
   ) {
     let resolvedSettings = settings ?? SettingsStore()
     let resolvedHistory = history ?? HistoryStore()
@@ -25,6 +27,7 @@ final class AppModel: ObservableObject {
     self.settings = resolvedSettings
     self.history = resolvedHistory
     self.permissions = resolvedPermissions
+    self.updates = updates ?? UpdateService()
     recording = RecordingCoordinator(
       settings: resolvedSettings,
       history: resolvedHistory,

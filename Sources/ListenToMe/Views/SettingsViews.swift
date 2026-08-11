@@ -1,13 +1,17 @@
 import AppKit
 import PermissionFlow
+import Sparkle
 import SwiftUI
 
 struct SettingsContentView: View {
   @ObservedObject var settings: SettingsStore
   @ObservedObject var permissions: PermissionService
+  let updates: UpdateService
 
   @State private var apiKey = ""
   @State private var keyStatus = ""
+  @State private var microphones: [MicrophoneInput] = MicrophoneInputCatalog
+    .listInputs()
 
   var body: some View {
     ScrollView {
@@ -27,6 +31,7 @@ struct SettingsContentView: View {
         shortcutSection
         voiceSection
         permissionsSection
+        updatesSection
       }
       .padding(30)
     }
@@ -37,6 +42,10 @@ struct SettingsContentView: View {
       // Field stays empty on purpose — paste a key to set or replace it.
       apiKey = ""
       keyStatus = ""
+      microphones = MicrophoneInputCatalog.listInputs()
+      if !microphones.contains(where: { $0.id == settings.microphoneDeviceUID }) {
+        settings.microphoneDeviceUID = MicrophoneInput.systemDefaultID
+      }
       settings.refreshAPIKeyPresence()
       permissions.refresh()
       permissions.startVisibilityMonitoring()
@@ -145,6 +154,22 @@ struct SettingsContentView: View {
     SettingsSection(title: "Voice and context") {
       VStack(alignment: .leading, spacing: 16) {
         VStack(alignment: .leading, spacing: 6) {
+          Text("Microphone")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(AppTheme.primaryText)
+          Picker("", selection: $settings.microphoneDeviceUID) {
+            ForEach(microphones) { device in
+              Text(device.name).tag(device.id)
+            }
+          }
+          .labelsHidden()
+          .frame(maxWidth: 320, alignment: .leading)
+          Text("Used for every dictation. System Default follows macOS Sound settings.")
+            .font(.system(size: 11))
+            .foregroundStyle(AppTheme.faintText)
+        }
+
+        VStack(alignment: .leading, spacing: 6) {
           HStack {
             Text("Writing guidance")
               .font(.system(size: 13, weight: .medium))
@@ -236,6 +261,22 @@ struct SettingsContentView: View {
             .fixedSize(horizontal: false, vertical: true)
           }
         }
+      }
+    }
+  }
+
+  private var updatesSection: some View {
+    SettingsSection(title: "Updates") {
+      VStack(alignment: .leading, spacing: 12) {
+        Text("ListenToMe checks for updates automatically. You can also check now.")
+          .font(.system(size: 12))
+          .foregroundStyle(AppTheme.secondaryText)
+          .fixedSize(horizontal: false, vertical: true)
+
+        Button("Check for Updates…") {
+          updates.updaterController.checkForUpdates(nil)
+        }
+        .buttonStyle(RecordActionButtonStyle())
       }
     }
   }

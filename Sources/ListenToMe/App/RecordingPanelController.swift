@@ -37,6 +37,13 @@ final class RecordingPanelController {
     )
   }
 
+  /// Mount/layout once at launch so the first dictation doesn't hitch.
+  func preload() {
+    positionOffscreen()
+    panel.orderBack(nil)
+    panel.orderOut(nil)
+  }
+
   func update(for phase: RecordingPhase, enabled: Bool) {
     guard enabled else {
       panel.orderOut(nil)
@@ -51,16 +58,21 @@ final class RecordingPanelController {
   }
 
   private func show() {
-    guard let screen = NSScreen.main else {
-      panel.orderFrontRegardless()
-      return
-    }
+    positionOnScreen()
+    panel.orderFrontRegardless()
+  }
+
+  private func positionOnScreen() {
+    guard let screen = NSScreen.main else { return }
     let visible = screen.visibleFrame
     let origin = NSPoint(
       x: visible.midX - panel.frame.width / 2,
       y: visible.minY + 42
     )
     panel.setFrameOrigin(origin)
-    panel.orderFrontRegardless()
+  }
+
+  private func positionOffscreen() {
+    panel.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
   }
 }

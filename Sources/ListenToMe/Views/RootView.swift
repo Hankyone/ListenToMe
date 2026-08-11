@@ -81,7 +81,8 @@ struct RootView: View {
         case .settings:
           SettingsContentView(
             settings: model.settings,
-            permissions: model.permissions
+            permissions: model.permissions,
+            updates: model.updates
           )
         }
       }

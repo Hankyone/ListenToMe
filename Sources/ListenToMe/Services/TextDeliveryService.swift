@@ -9,10 +9,6 @@ import Foundation
 /// clipboard paste with layout-safe key codes, then AppleScript Edit → Paste.
 @MainActor
 final class TextDeliveryService {
-  private struct ClipboardSnapshot {
-    let items: [[NSPasteboard.PasteboardType: Data]]
-  }
-
   private let markerType = NSPasteboard.PasteboardType(
     "ca.hankyone.ListenToMe.PasteSession"
   )
@@ -29,7 +25,9 @@ final class TextDeliveryService {
     _ text: String,
     to target: TargetApplication?
   ) async -> DeliveryOutcome {
-    // Always park the transcript on the clipboard as a safety net.
+    // Always leave the transcript on the clipboard. Restoring the previous
+    // pasteboard races apps that paste asynchronously (Handy #502) and was
+    // wiping the payload before Cmd+V landed.
     copy(text)
 
     let attempt = DeliveryPolicy.canAttemptPaste(
@@ -40,60 +38,60 @@ final class TextDeliveryService {
       return attempt
     }
 
-    // Bring the original app back before injecting keys (VoiceInk/Handy assume
-    // the user's field is frontmost; finishing can leave focus elsewhere).
     if !activate(target) {
-      return .copiedFocusChanged
+      // Still try paste — some hosts stay frontmost without a successful activate().
     }
-    try? await Task.sleep(nanoseconds: 120_000_000)
+    try? await Task.sleep(nanoseconds: 180_000_000)
+
+    // Retry focus briefly; activation is often async on modern macOS.
+    for _ in 0..<4 {
+      let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+      if frontmostPID == target.processIdentifier { break }
+      _ = activate(target)
+      try? await Task.sleep(nanoseconds: 80_000_000)
+    }
 
     let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    guard
+    let focusOK =
       DeliveryPolicy.outcome(
         target: target,
         frontmostProcessIdentifier: frontmostPID,
         hasAccessibilityPermission: true
       ) == .pasted
-    else {
-      return .copiedFocusChanged
-    }
 
-    // 1) Direct AX insert — no clipboard race (Hex strategy).
+    // 1) Direct AX insert — no key events needed (Hex).
     if insertTextViaAccessibility(text) {
       return .pasted
     }
 
-    // 2) Clipboard + Cmd+V, then AppleScript paste as fallback.
-    let snapshot = captureClipboard()
+    if !focusOK {
+      // Leave text on clipboard so the user can paste manually.
+      return .copiedFocusChanged
+    }
+
     let marker = UUID().uuidString
     guard preparePasteboard(text: text, marker: marker) else {
       copy(text)
       return .copiedPasteFailed
     }
-    let publishedChangeCount = NSPasteboard.general.changeCount
 
-    // Brief settle so the pasteboard commit is visible (Hex waits for changeCount).
-    try? await Task.sleep(nanoseconds: 80_000_000)
+    try? await Task.sleep(nanoseconds: 60_000_000)
 
-    let pasted =
-      await postPasteShortcut()
-      || pasteViaAppleScriptKeyCode()
-      || pasteViaEditMenu()
-
-    // Give slow targets time to read before restore (Handy #502 race).
-    try? await Task.sleep(nanoseconds: 550_000_000)
-
-    let stillOurs =
-      NSPasteboard.general.string(forType: markerType) == marker
-      && NSPasteboard.general.changeCount == publishedChangeCount
-
-    if stillOurs {
-      restoreClipboard(snapshot)
-    } else if NSPasteboard.general.string(forType: .string) != text {
-      // Someone else replaced the board without our text — put it back.
-      copy(text)
+    // Post Cmd+V twice with a gap — Electron/Cursor often miss the first chord.
+    var pasted = await postPasteShortcut()
+    if pasted {
+      try? await Task.sleep(nanoseconds: 120_000_000)
+    } else {
+      pasted = await postPasteShortcut()
+    }
+    if !pasted {
+      pasted = pasteViaAppleScriptKeyCode()
+    }
+    if !pasted {
+      pasted = pasteViaEditMenu()
     }
 
+    // Keep our text on the clipboard either way.
     return pasted ? .pasted : .copiedPasteFailed
   }
 
@@ -109,21 +107,10 @@ final class TextDeliveryService {
     else {
       return false
     }
-    // macOS 14+: activate() already brings the app forward; the old
-    // activateIgnoringOtherApps option is a no-op / deprecated.
-    return app.activate()
-  }
-
-  private func captureClipboard() -> ClipboardSnapshot {
-    let items = (NSPasteboard.general.pasteboardItems ?? []).map { item in
-      [NSPasteboard.PasteboardType: Data](
-        uniqueKeysWithValues: item.types.compactMap { type in
-          guard let data = item.data(forType: type) else { return nil }
-          return (type, data)
-        }
-      )
+    if #available(macOS 14.0, *) {
+      NSApp.yieldActivation(to: app)
     }
-    return ClipboardSnapshot(items: items)
+    return app.activate()
   }
 
   private func preparePasteboard(text: String, marker: String) -> Bool {
@@ -135,21 +122,6 @@ final class TextDeliveryService {
       _ = pasteboard.setString("", forType: type)
     }
     return true
-  }
-
-  private func restoreClipboard(_ snapshot: ClipboardSnapshot) {
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    guard !snapshot.items.isEmpty else { return }
-
-    let restoredItems = snapshot.items.map { captured in
-      let item = NSPasteboardItem()
-      for (type, data) in captured {
-        item.setData(data, forType: type)
-      }
-      return item
-    }
-    pasteboard.writeObjects(restoredItems)
   }
 
   /// Insert by replacing the current selection / empty selection (Hex).
@@ -171,7 +143,6 @@ final class TextDeliveryService {
 
     let focused = focusedObject as! AXUIElement
 
-    // Prefer selected-text replace (works for many AppKit / Electron fields).
     if AXUIElementSetAttributeValue(
       focused,
       kAXSelectedTextAttribute as CFString,
@@ -180,7 +151,6 @@ final class TextDeliveryService {
       return true
     }
 
-    // Fall back to setting the whole value when the control allows it.
     var settable = DarwinBoolean(false)
     if AXUIElementIsAttributeSettable(
       focused,
@@ -212,7 +182,9 @@ final class TextDeliveryService {
   private func postPasteShortcut() async -> Bool {
     guard AXIsProcessTrusted() else { return false }
 
-    let source = CGEventSource(stateID: .combinedSessionState)
+    let source =
+      CGEventSource(stateID: .combinedSessionState)
+      ?? CGEventSource(stateID: .hidSystemState)
     let commandKeyCode: CGKeyCode = 0x37  // Left ⌘
     let vKeyCode: CGKeyCode = 0x09  // Physical V
 
@@ -245,17 +217,14 @@ final class TextDeliveryService {
     vDown.flags = .maskCommand
     vUp.flags = .maskCommand
 
-    cmdDown.post(tap: .cghidEventTap)
-    try? await Task.sleep(nanoseconds: 12_000_000)
-    vDown.post(tap: .cghidEventTap)
-    try? await Task.sleep(nanoseconds: 12_000_000)
-    vUp.post(tap: .cghidEventTap)
-    try? await Task.sleep(nanoseconds: 12_000_000)
-    cmdUp.post(tap: .cghidEventTap)
+    for event in [cmdDown, vDown, vUp, cmdUp] {
+      event.post(tap: .cghidEventTap)
+      event.post(tap: .cgSessionEventTap)
+      try? await Task.sleep(nanoseconds: 14_000_000)
+    }
     return true
   }
 
-  /// System Events key code 9 + ⌘ — layout-safe (VoiceInk AppleScript path).
   private func pasteViaAppleScriptKeyCode() -> Bool {
     let source = """
       tell application "System Events" to key code 9 using command down
@@ -266,7 +235,6 @@ final class TextDeliveryService {
     return error == nil
   }
 
-  /// Click Edit → Paste in the frontmost process (Hex menu fallback).
   private func pasteViaEditMenu() -> Bool {
     let source = """
       tell application "System Events"

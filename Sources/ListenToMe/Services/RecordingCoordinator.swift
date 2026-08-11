@@ -64,6 +64,8 @@ final class RecordingCoordinator: ObservableObject {
   func start() async {
     guard !phase.isBusy else { return }
 
+    // Show the overlay and grab the target app before any slow work so the
+    // first spoken words aren't lost to media-pause scripts / websocket setup.
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -72,6 +74,10 @@ final class RecordingCoordinator: ObservableObject {
     liveDraft.reset()
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
+    targetApplication = captureTargetApplication()
+    phase = .connecting
+    startedAt = Date()
+    startElapsedTimer()
 
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
@@ -97,7 +103,6 @@ final class RecordingCoordinator: ObservableObject {
 
     permissions.refresh()
     if !permissions.microphoneGranted {
-      phase = .connecting
       let granted = await permissions.requestMicrophone()
       guard granted else {
         fail("Microphone access is off. Allow it in System Settings, then try again.")
@@ -105,13 +110,9 @@ final class RecordingCoordinator: ObservableObject {
       }
     }
 
-    targetApplication = captureTargetApplication()
-    mediaPause.begin()
-
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
-      startedAt = Date()
 
       if usesBatchTranscription {
         try startBatchCapture(recordingURL: recordingURL)
@@ -120,7 +121,14 @@ final class RecordingCoordinator: ObservableObject {
       }
 
       phase = .recording
-      startElapsedTimer()
+
+      // Duck media only after the mic is live — AppleScript must never delay capture.
+      Task { @MainActor [weak self] in
+        guard let self, self.phase == .recording || self.phase == .finishing else {
+          return
+        }
+        self.mediaPause.begin()
+      }
 
       if stopRequestedWhileStarting {
         stopRequestedWhileStarting = false
@@ -281,6 +289,7 @@ final class RecordingCoordinator: ObservableObject {
 
     try audioCapture.start(
       recordingURL: recordingURL,
+      deviceUID: settings.microphoneDeviceUID,
       onPCMChunk: { [weak self] data in
         self?.audioContinuation?.yield(data)
       },
@@ -300,6 +309,7 @@ final class RecordingCoordinator: ObservableObject {
   private func startBatchCapture(recordingURL: URL) throws {
     try audioCapture.start(
       recordingURL: recordingURL,
+      deviceUID: settings.microphoneDeviceUID,
       onPCMChunk: { _ in },
       onLevel: { [weak self] level in
         DispatchQueue.main.async {
