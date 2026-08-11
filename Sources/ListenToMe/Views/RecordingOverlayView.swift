@@ -34,9 +34,8 @@ struct RecordingOverlayView: View {
           .contentTransition(.opacity)
           .animation(.easeOut(duration: 0.18), value: statusLine)
 
-        Text(transcriptLine)
+        transcriptLine
           .font(.system(size: 13))
-          .foregroundStyle(AppTheme.secondaryText)
           .lineLimit(2)
           .truncationMode(.head)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,12 +101,24 @@ struct RecordingOverlayView: View {
     }
   }
 
-  private var transcriptLine: String {
-    let text = coordinator.partialTranscript
+  @ViewBuilder
+  private var transcriptLine: some View {
+    let committed = coordinator.committedTranscript
+    let tentative = coordinator.tentativeTranscript
+    let combined = (committed + tentative)
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    if !text.isEmpty {
-      return text
+
+    if combined.isEmpty {
+      Text(placeholderTranscript)
+        .foregroundStyle(AppTheme.secondaryText)
+    } else {
+      // Committed = stable ink; tentative = still-revising live tail.
+      (Text(committed).foregroundStyle(AppTheme.primaryText)
+        + Text(tentative).foregroundStyle(AppTheme.secondaryText))
     }
+  }
+
+  private var placeholderTranscript: String {
     switch coordinator.phase {
     case .connecting:
       return "You can start speaking now."

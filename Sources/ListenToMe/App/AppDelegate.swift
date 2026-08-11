@@ -16,11 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var subscriptions: Set<AnyCancellable> = []
   private var pressStartedRecording = false
   private var pressAt: Date?
+  private var lastPressAt: Date?
+  private var pendingReleaseTask: Task<Void, Never>?
 
   /// Holding the key past this long means push-to-talk: release stops.
   /// A quicker tap leaves dictation running until the next tap.
   /// Space during a live take locks hands-free continuation after release.
   private let pushToTalkThreshold: TimeInterval = 0.5
+  /// Absorbs key-repeat / bounce on press (Handy-style debounce).
+  private let pressDebounce: TimeInterval = 0.03
+  /// Defers PTT stop briefly so auto-repeat release/press pairs don't cut off.
+  private let releaseGraceNanoseconds: UInt64 = 50_000_000
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApplication.shared.setActivationPolicy(.accessory)
@@ -100,6 +106,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func hotkeyPressed() {
+    // A press during the release-grace window cancels the pending stop.
+    if pendingReleaseTask != nil {
+      pendingReleaseTask?.cancel()
+      pendingReleaseTask = nil
+      return
+    }
+
+    if let lastPressAt, Date().timeIntervalSince(lastPressAt) < pressDebounce {
+      return
+    }
+    lastPressAt = Date()
+
     switch model.recording.phase {
     case .idle, .delivered, .failed:
       pressStartedRecording = true
@@ -119,26 +137,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func hotkeyReleased() {
-    defer {
-      pressStartedRecording = false
-      pressAt = nil
-    }
-    guard pressStartedRecording else { return }
+    let startedThisPress = pressStartedRecording
+    let pressStartedAt = pressAt
+    pressStartedRecording = false
+    pressAt = nil
+
+    guard startedThisPress else { return }
     // Space locked the take: keep listening after the hotkey comes up.
     guard !model.recording.isHandsFreeLocked else { return }
 
     let isHoldStyle: Bool
     if model.settings.hotkey.kind == .modifierHold {
       isHoldStyle = true
-    } else if let pressAt {
-      isHoldStyle = Date().timeIntervalSince(pressAt) >= pushToTalkThreshold
+    } else if let pressStartedAt {
+      isHoldStyle = Date().timeIntervalSince(pressStartedAt) >= pushToTalkThreshold
     } else {
       isHoldStyle = false
     }
     guard isHoldStyle else { return }
 
-    Task {
-      await model.recording.requestStop()
+    pendingReleaseTask?.cancel()
+    let grace = releaseGraceNanoseconds
+    pendingReleaseTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: grace)
+      guard let self, !Task.isCancelled else { return }
+      self.pendingReleaseTask = nil
+      guard !self.model.recording.isHandsFreeLocked else { return }
+      await self.model.recording.requestStop()
     }
   }
 

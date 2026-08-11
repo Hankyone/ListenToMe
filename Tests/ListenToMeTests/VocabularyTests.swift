@@ -44,5 +44,6 @@ final class VocabularyTests: XCTestCase {
     XCTAssertTrue(configuration.prompt.contains("scratch that"))
     XCTAssertTrue(configuration.prompt.contains("I mean"))
     XCTAssertTrue(configuration.prompt.contains("Do not keep the cue words"))
+    XCTAssertTrue(configuration.prompt.contains("Strip filler"))
   }
 }

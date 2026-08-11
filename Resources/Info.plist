@@ -30,6 +30,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>ListenToMe pauses Music, Spotify, and similar apps while you dictate, then resumes them when you finish.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ListenToMe needs microphone access to turn your speech into text.</string>
 	<key>NSPrincipalClass</key>

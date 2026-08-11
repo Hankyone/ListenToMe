@@ -60,7 +60,10 @@ final class SettingsStore: ObservableObject {
       ?? true
     basePrompt =
       defaults.string(forKey: Keys.basePrompt)
-      ?? "Write natural, polished dictation. Keep the speaker's meaning, paragraph breaks, punctuation, and capitalization. Do not add ideas that were not spoken."
+      ?? """
+      Write natural, polished dictation. Keep the speaker's meaning, paragraph breaks, punctuation, and capitalization. Do not add ideas that were not spoken. Omit filler words such as um, uh, er, like (when filler), and you know. Prefer clean sentences. When the dictation is meant to continue typing in place, end with a single trailing space.
+      """
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     delay =
       TranscriptionDelay(
         rawValue: defaults.string(forKey: Keys.delay) ?? ""

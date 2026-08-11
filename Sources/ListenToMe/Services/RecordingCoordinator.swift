@@ -6,6 +6,8 @@ import Foundation
 final class RecordingCoordinator: ObservableObject {
   @Published private(set) var phase: RecordingPhase = .idle
   @Published private(set) var partialTranscript = ""
+  @Published private(set) var committedTranscript = ""
+  @Published private(set) var tentativeTranscript = ""
   @Published private(set) var elapsed: TimeInterval = 0
   @Published private(set) var levels: [Float] = Array(repeating: 0.04, count: 24)
   @Published private(set) var targetApplication: TargetApplication?
@@ -20,6 +22,10 @@ final class RecordingCoordinator: ObservableObject {
   private let permissions: PermissionService
   private let audioCapture = AudioCaptureService()
   private let delivery = TextDeliveryService()
+  private let mediaPause = MediaPauseService()
+  private lazy var liveDraft = LiveTranscriptDraft { [weak self] snapshot in
+    self?.applyLiveSnapshot(snapshot)
+  }
 
   private var client: (any TranscriptionClient)?
   private var audioContinuation: AsyncStream<Data>.Continuation?
@@ -59,7 +65,7 @@ final class RecordingCoordinator: ObservableObject {
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
     isHandsFreeLocked = false
-    partialTranscript = ""
+    liveDraft.reset()
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
 
@@ -87,6 +93,7 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     targetApplication = captureTargetApplication()
+    mediaPause.begin()
 
     // The microphone opens first so speech is never missed. Captured audio
     // buffers in the stream while the OpenAI session opens alongside it.
@@ -172,7 +179,7 @@ final class RecordingCoordinator: ObservableObject {
     didFinalizeCurrentRecording = true
     isHandsFreeLocked = false
     teardownSession()
-    partialTranscript = ""
+    liveDraft.reset()
     phase = .idle
     resetRecordingReferences()
   }
@@ -228,13 +235,12 @@ final class RecordingCoordinator: ObservableObject {
 
     case .delta(_, let text):
       guard phase == .recording || phase == .finishing else { return }
-      // Live preview only. The committed `completed` transcript is what gets pasted.
-      partialTranscript += text
+      liveDraft.applyDelta(text)
 
     case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
       // Source of truth for delivery — includes spoken "correction" rewrites.
-      partialTranscript = transcript
+      liveDraft.applyCompleted(transcript)
       Task {
         await finalize(transcript: transcript)
       }
@@ -243,6 +249,12 @@ final class RecordingCoordinator: ObservableObject {
       guard phase.isBusy else { return }
       fail(message)
     }
+  }
+
+  private func applyLiveSnapshot(_ snapshot: LiveTranscriptSnapshot) {
+    committedTranscript = snapshot.committed
+    tentativeTranscript = snapshot.tentative
+    partialTranscript = snapshot.display
   }
 
   private func finalize(transcript: String) async {
@@ -288,8 +300,9 @@ final class RecordingCoordinator: ObservableObject {
     history.add(entry)
     onHistoryEntryCreated?(entry.id)
 
-    partialTranscript = finalText
+    liveDraft.applyCompleted(finalText)
     isHandsFreeLocked = false
+    mediaPause.end()
     phase = .delivered(outcome)
     resetRecordingReferences()
 
@@ -316,6 +329,7 @@ final class RecordingCoordinator: ObservableObject {
     elapsedTask = nil
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
+    mediaPause.end()
 
     audioCapture.cancel()
     audioContinuation?.finish()
