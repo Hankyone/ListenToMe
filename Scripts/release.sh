@@ -15,12 +15,14 @@ INFO_PLIST="$PROJECT_DIR/Resources/Info.plist"
 DIST_DIR="$PROJECT_DIR/dist"
 RELEASE_DIR="$PROJECT_DIR/release"
 PACKAGE_SCRIPT="$PROJECT_DIR/Scripts/package-app.sh"
+DMG_SCRIPT="$PROJECT_DIR/Scripts/create-dmg.sh"
 SPARKLE_TOOLS_DIR="${SPARKLE_TOOLS_DIR:-$PROJECT_DIR/.tmp/bin}"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"
 TAG="v${VERSION}"
 ZIP_NAME="${APP_NAME}-${VERSION}.zip"
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 DOWNLOAD_PREFIX="${DOWNLOAD_PREFIX:-https://github.com/Hankyone/ListenToMe/releases/download/${TAG}/}"
 
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: Anouar Mansour (K32684A887)}"
@@ -104,9 +106,30 @@ mkdir -p "$RELEASE_DIR"
 # (Sparkle distribution guidance).
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$RELEASE_DIR/$ZIP_NAME"
 
+print "Creating installer DMG…"
+export CODESIGN_IDENTITY
+"$DMG_SCRIPT" "$APP_PATH" "$RELEASE_DIR/$DMG_NAME"
+
+print "Notarizing ${DMG_NAME}…"
+xcrun notarytool submit "$RELEASE_DIR/$DMG_NAME" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" \
+    --wait
+xcrun stapler staple "$RELEASE_DIR/$DMG_NAME"
+
 # Optional release notes beside the zip for generate_appcast.
 if [[ -f "$PROJECT_DIR/RELEASE_NOTES.md" ]]; then
     cp "$PROJECT_DIR/RELEASE_NOTES.md" "$RELEASE_DIR/${APP_NAME}-${VERSION}.md"
+fi
+
+# generate_appcast scans the folder; keep the DMG out so Sparkle only
+# publishes the zip update archive.
+SPARKLE_DIR="$RELEASE_DIR/sparkle"
+mkdir -p "$SPARKLE_DIR"
+cp "$RELEASE_DIR/$ZIP_NAME" "$SPARKLE_DIR/"
+if [[ -f "$RELEASE_DIR/${APP_NAME}-${VERSION}.md" ]]; then
+    cp "$RELEASE_DIR/${APP_NAME}-${VERSION}.md" "$SPARKLE_DIR/"
 fi
 
 print "Generating Sparkle appcast…"
@@ -114,11 +137,13 @@ print "Generating Sparkle appcast…"
     --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
     --download-url-prefix "$DOWNLOAD_PREFIX" \
     -o "$RELEASE_DIR/appcast.xml" \
-    "$RELEASE_DIR"
+    "$SPARKLE_DIR"
+rm -rf "$SPARKLE_DIR"
 
 print "Release artifacts ready in $RELEASE_DIR"
 print "  version: $VERSION ($BUILD)"
 print "  tag:     $TAG"
 print "  zip:     $RELEASE_DIR/$ZIP_NAME"
+print "  dmg:     $RELEASE_DIR/$DMG_NAME"
 print "  appcast: $RELEASE_DIR/appcast.xml"
 ls -lh "$RELEASE_DIR"

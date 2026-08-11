@@ -33,6 +33,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "zip=ListenToMe-${VERSION}.zip" >> "$GITHUB_OUTPUT"
+          echo "dmg=ListenToMe-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Install create-dmg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
+        run: brew install create-dmg
 
       - name: Import Developer ID certificate
         env:
@@ -80,12 +87,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           ZIP_NAME: ${{ steps.version.outputs.zip }}
+          DMG_NAME: ${{ steps.version.outputs.dmg }}
         run: |
           NOTES="ListenToMe ${VERSION}"
           if [[ -f RELEASE_NOTES.md ]]; then
             NOTES="$(cat RELEASE_NOTES.md)"
           fi
           gh release create "$GITHUB_REF_NAME" \
+            "release/${DMG_NAME}" \
             "release/${ZIP_NAME}" \
             "release/appcast.xml" \
             --title "ListenToMe ${VERSION}" \

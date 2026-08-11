@@ -74,8 +74,8 @@ git push origin main v0.3.0
 ```
 
 The tag must match `v` + the short version string. GitHub Actions builds,
-notarizes, uploads `ListenToMe-X.Y.Z.zip` and `appcast.xml`, and publishes the
-release.
+notarizes, uploads `ListenToMe-X.Y.Z.dmg` (installer), `ListenToMe-X.Y.Z.zip`
+(Sparkle updates), and `appcast.xml`, then publishes the release.
 
 ### Required repository secrets
 
