@@ -27,13 +27,109 @@ private let hotkeyEventCallback: EventHandlerUPP = { _, event, userData in
   return noErr
 }
 
+/// Shared with the CGEvent tap callback (runs off the main thread).
+private final class SessionTapState: @unchecked Sendable {
+  private let lock = NSLock()
+  var eventTap: CFMachPort?
+  private var spaceLockArmed = false
+  private var spaceLockLatched = false
+
+  func setArmed(_ armed: Bool) {
+    lock.lock()
+    spaceLockArmed = armed
+    if armed { spaceLockLatched = false }
+    lock.unlock()
+  }
+
+  func clearLatch() {
+    lock.lock()
+    spaceLockLatched = false
+    lock.unlock()
+  }
+
+  var isLatched: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return spaceLockLatched
+  }
+
+  func consumeSpaceLockIfArmed() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard spaceLockArmed else { return false }
+    spaceLockArmed = false
+    spaceLockLatched = true
+    return true
+  }
+
+  func reenable() {
+    lock.lock()
+    let tap = eventTap
+    lock.unlock()
+    if let tap {
+      CGEvent.tapEnable(tap: tap, enable: true)
+    }
+  }
+
+  func setTap(_ tap: CFMachPort?) {
+    lock.lock()
+    eventTap = tap
+    lock.unlock()
+  }
+
+  var hasTap: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return eventTap != nil
+  }
+}
+
+/// CGEvent taps see Space while a Carbon hotkey is still held — NSEvent
+/// global monitors often do not.
+private let sessionTapCallback: CGEventTapCallBack = { _, type, event, userInfo in
+  guard let userInfo else {
+    return Unmanaged.passUnretained(event)
+  }
+  let service = Unmanaged<HotkeyService>
+    .fromOpaque(userInfo)
+    .takeUnretainedValue()
+
+  if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+    service.sessionTapState.reenable()
+    return Unmanaged.passUnretained(event)
+  }
+
+  guard type == .keyDown else {
+    return Unmanaged.passUnretained(event)
+  }
+
+  if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+    return Unmanaged.passUnretained(event)
+  }
+
+  let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+  if keyCode == Int64(kVK_Escape) {
+    DispatchQueue.main.async {
+      service.onCancel?()
+    }
+    return nil
+  }
+
+  if keyCode == Int64(kVK_Space), service.sessionTapState.consumeSpaceLockIfArmed() {
+    DispatchQueue.main.async {
+      service.onLock?()
+    }
+    return nil
+  }
+
+  return Unmanaged.passUnretained(event)
+}
+
 /// One global dictation shortcut. Two shapes:
 /// - A key combo (Carbon hotkey): tap toggles, hold speaks until release.
-/// - A lone modifier (Fn, Right Command…): hold speaks until release,
-///   watched through `flagsChanged` monitors.
-/// While dictation is live, Escape cancels. Space locks hands-free — but only
-/// while the primary shortcut is still held (NSEvent monitors, not Carbon,
-/// so Space still matches when modifiers from the hold are down).
+/// - A lone modifier (Fn, Right Command…): hold speaks until release.
+/// While a take is live, a CGEvent tap handles Escape (cancel) and Space
+/// (lock hands-free) — including while the primary shortcut is still held.
 @MainActor
 final class HotkeyService {
   private enum HotkeyIdentifier: UInt32 {
@@ -44,8 +140,6 @@ final class HotkeyService {
   var onRelease: (() -> Void)?
   var onCancel: (() -> Void)?
   var onLock: (() -> Void)?
-  /// App supplies whether Space-to-lock is enabled and not already locked.
-  var isSpaceLockAllowed: () -> Bool = { true }
 
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
@@ -54,18 +148,17 @@ final class HotkeyService {
   private var spec: HotkeySpec?
   private var globalMonitors: [Any] = []
   private var localMonitor: Any?
-  private var sessionGlobalMonitors: [Any] = []
-  private var sessionLocalMonitor: Any?
   private var modifierKeyIsDown = false
   private var holdCandidateGeneration = 0
   private var holdCandidateIsPending = false
   private var holdIsActive = false
   private let holdConfirmDelay: TimeInterval = 0.2
 
-  /// True while the primary dictation key/modifier is physically down.
-  var isPrimaryHeld: Bool {
-    comboIsDown || holdIsActive || modifierKeyIsDown
-  }
+  fileprivate let sessionTapState = SessionTapState()
+  private var runLoopSource: CFRunLoopSource?
+
+  /// True after Space was hit on this hold, even if MainActor hasn't applied it yet.
+  var isSpaceLockLatched: Bool { sessionTapState.isLatched }
 
   /// Drops the primary shortcut, e.g. while the recorder captures a new one.
   func suspend() {
@@ -104,10 +197,22 @@ final class HotkeyService {
     }
   }
 
+  /// Arm Space-to-lock for the duration of a push-to-talk hold.
+  func setSpaceLockArmed(_ armed: Bool) {
+    sessionTapState.setArmed(armed)
+  }
+
+  func clearSpaceLockLatch() {
+    sessionTapState.clearLatch()
+  }
+
   func setSessionControlsActive(_ active: Bool) {
-    tearDownSessionMonitors()
-    guard active else { return }
-    installSessionMonitors()
+    if active {
+      installSessionTap()
+    } else {
+      setSpaceLockArmed(false)
+      tearDownSessionTap()
+    }
   }
 
   fileprivate func handleCarbonEvent(id: UInt32, kind: UInt32) {
@@ -152,62 +257,46 @@ final class HotkeyService {
     return status == noErr
   }
 
-  // MARK: - Session Escape / Space (NSEvent)
+  // MARK: - Session Escape / Space (CGEvent tap)
 
-  private func installSessionMonitors() {
-    if let monitor = NSEvent.addGlobalMonitorForEvents(
-      matching: .keyDown,
-      handler: { [weak self] event in
-        MainActor.assumeIsolated {
-          _ = self?.handleSessionKeyDown(event)
-        }
-      }
-    ) {
-      sessionGlobalMonitors.append(monitor)
+  private func installSessionTap() {
+    if sessionTapState.hasTap {
+      sessionTapState.reenable()
+      return
     }
 
-    sessionLocalMonitor = NSEvent.addLocalMonitorForEvents(
-      matching: .keyDown
-    ) { [weak self] event in
-      MainActor.assumeIsolated {
-        guard let self else { return event }
-        return self.handleSessionKeyDown(event) ? event : nil
-      }
+    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+    guard
+      let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: mask,
+        callback: sessionTapCallback,
+        userInfo: Unmanaged.passUnretained(self).toOpaque()
+      )
+    else {
+      return
     }
+
+    sessionTapState.setTap(tap)
+    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    runLoopSource = source
+    if let source {
+      CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    }
+    CGEvent.tapEnable(tap: tap, enable: true)
   }
 
-  /// Returns `true` when the event should continue to the app (not consumed).
-  @discardableResult
-  private func handleSessionKeyDown(_ event: NSEvent) -> Bool {
-    // Ignore key-repeat.
-    guard !event.isARepeat else { return true }
-
-    if event.keyCode == UInt16(kVK_Escape) {
-      onCancel?()
-      return false
+  private func tearDownSessionTap() {
+    if let tap = sessionTapState.eventTap {
+      CGEvent.tapEnable(tap: tap, enable: false)
     }
-
-    if event.keyCode == UInt16(kVK_Space) {
-      // Space-to-lock only while the primary shortcut is still held — that's
-      // the "keep talking and use the computer" gesture. Carbon bare-Space
-      // hotkeys never matched here because hold modifiers were still down.
-      guard isSpaceLockAllowed(), isPrimaryHeld else { return true }
-      onLock?()
-      return false
+    if let runLoopSource {
+      CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
     }
-
-    return true
-  }
-
-  private func tearDownSessionMonitors() {
-    for monitor in sessionGlobalMonitors {
-      NSEvent.removeMonitor(monitor)
-    }
-    sessionGlobalMonitors = []
-    if let sessionLocalMonitor {
-      NSEvent.removeMonitor(sessionLocalMonitor)
-      self.sessionLocalMonitor = nil
-    }
+    runLoopSource = nil
+    sessionTapState.setTap(nil)
   }
 
   // MARK: - Lone-modifier hold
@@ -218,11 +307,15 @@ final class HotkeyService {
         self?.handleFlagsChanged(event)
       }
     }
-    let keyHandler: (NSEvent) -> Void = { [weak self] _ in
+    let keyHandler: (NSEvent) -> Void = { [weak self] event in
       MainActor.assumeIsolated {
-        // Any real keystroke means the modifier is part of a chord,
-        // not a dictation hold — except Space/Escape, which session
-        // monitors handle for lock/cancel.
+        // Chord keystrokes cancel a pending hold confirm — but not Space/Esc,
+        // which the session tap handles for lock/cancel.
+        if event.keyCode == UInt16(kVK_Space)
+          || event.keyCode == UInt16(kVK_Escape)
+        {
+          return
+        }
         self?.holdCandidateIsPending = false
       }
     }
@@ -245,9 +338,7 @@ final class HotkeyService {
       MainActor.assumeIsolated {
         if event.type == .flagsChanged {
           flagsHandler(event)
-        } else if event.keyCode != UInt16(kVK_Space),
-          event.keyCode != UInt16(kVK_Escape)
-        {
+        } else {
           keyHandler(event)
         }
       }
@@ -266,9 +357,6 @@ final class HotkeyService {
     let flagPresent = event.modifierFlags
       .intersection(.deviceIndependentFlagsMask)
       .contains(flag)
-    // Events for this key code alternate down and up. The flag itself can
-    // stay raised when the twin key (the other Command, say) is also held,
-    // so the tracked state decides.
     let isPress = flagPresent && !modifierKeyIsDown
 
     if isPress {
@@ -327,11 +415,11 @@ final class HotkeyService {
     if let handlerRef {
       RemoveEventHandler(handlerRef)
     }
-    for monitor in sessionGlobalMonitors {
-      NSEvent.removeMonitor(monitor)
+    if let tap = sessionTapState.eventTap {
+      CGEvent.tapEnable(tap: tap, enable: false)
     }
-    if let sessionLocalMonitor {
-      NSEvent.removeMonitor(sessionLocalMonitor)
+    if let runLoopSource {
+      CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
     }
   }
 }

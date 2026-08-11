@@ -98,12 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     hotkey.onLock = { [weak self] in
       self?.lockDictationFromHold()
     }
-    hotkey.isSpaceLockAllowed = { [weak self] in
-      guard let self else { return false }
-      guard self.model.settings.spaceLocksHandsFree else { return false }
-      guard !self.model.recording.isHandsFreeLocked else { return false }
-      return self.pressStartedRecording || self.model.recording.phase.isBusy
-    }
     applyHotkey(model.settings.hotkey)
 
     model.settings.$hotkey
@@ -181,15 +175,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if model.settings.showRecordingOverlay {
         overlayController?.update(for: .recording, enabled: true)
       }
-      // Space/Esc must work while the primary key is still held — don't wait
-      // for phase to flip inside the async start() Task.
+      // Escape/Space via CGEvent tap — Space armed only for this hold.
       hotkey.setSessionControlsActive(true)
+      hotkey.setSpaceLockArmed(model.settings.spaceLocksHandsFree)
       Task {
         await model.recording.start()
       }
     case .recording:
       // Second press always finishes, whether hold, tap-toggle, or Space-locked.
       pressStartedRecording = false
+      hotkey.setSpaceLockArmed(false)
       Task {
         await model.recording.stop()
       }
@@ -204,9 +199,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     pressStartedRecording = false
     pressAt = nil
 
+    // Disarm Space once the initiating key is up — after lock, typing Space
+    // must go to the focused app. Latch covers the race where Space was hit
+    // but MainActor hasn't applied isHandsFreeLocked yet.
+    let wasLocked =
+      model.recording.isHandsFreeLocked || hotkey.isSpaceLockLatched
+    hotkey.setSpaceLockArmed(false)
+    if wasLocked {
+      hotkey.clearSpaceLockLatch()
+      if !model.recording.isHandsFreeLocked {
+        model.recording.setHandsFreeLocked(true)
+      }
+    }
+
     guard startedThisPress else { return }
     // Space locked the take: keep listening after the hotkey comes up.
-    guard !model.recording.isHandsFreeLocked else { return }
+    guard !wasLocked else { return }
 
     let settings = model.settings
     let isHoldStyle: Bool
@@ -256,6 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       || model.recording.phase == .connecting
       || model.recording.phase == .recording
     {
+      hotkey.setSpaceLockArmed(false)
       model.recording.setHandsFreeLocked(true)
     }
   }
@@ -561,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     } else {
       let rootView = RootView(model: model)
       let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 660),
+        contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
         styleMask: [
           .titled,
           .closable,
@@ -572,24 +581,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defer: false
       )
       window.title = "ListenToMe"
-      window.minSize = NSSize(width: 840, height: 560)
+      window.minSize = NSSize(width: 560, height: 420)
       // Hard caps — never let SwiftUI content or a huge autosave frame
       // stretch the window across a 4K display.
-      window.maxSize = NSSize(width: 1_600, height: 1_000)
+      window.maxSize = NSSize(width: 1_100, height: 860)
       window.titlebarAppearsTransparent = false
       // Empty sizingOptions: content never drives the window frame.
       let hostingView = NSHostingView(rootView: rootView)
       hostingView.sizingOptions = []
       window.contentView = hostingView
       window.center()
-      window.setFrameAutosaveName("ListenToMe.MainWindow")
+      window.setFrameAutosaveName("ListenToMe.MainWindow.v2")
 
       controller = NSWindowController(window: window)
       mainWindowController = controller
     }
 
     if let window = controller.window {
-      window.maxSize = NSSize(width: 1_600, height: 1_000)
+      window.maxSize = NSSize(width: 1_100, height: 860)
       clampMainWindowFrame(window)
     }
     NSApplication.shared.activate(ignoringOtherApps: true)
@@ -655,17 +664,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {
-    let isRecording = phase == .recording
+    let isListening = phase == .recording || phase == .connecting
     let needsAttention =
       phase == .failed || model.recording.errorMessage != nil
-    statusItem?.button?.image = NSImage(
-      systemSymbolName: isRecording ? "record.circle.fill" : "waveform",
-      accessibilityDescription: isRecording ? "Recording" : "ListenToMe"
+    statusItem?.button?.image = StatusMenuIcon.statusImage(
+      isActive: isListening || needsAttention
     )
-    statusItem?.button?.contentTintColor =
-      isRecording || needsAttention
-      ? NSColor(calibratedRed: 0.80, green: 0.35, blue: 0.24, alpha: 1)
-      : nil
+    // Tint is baked into the active image; clear any leftover contentTint.
+    statusItem?.button?.contentTintColor = nil
     statusItem?.button?.toolTip = "ListenToMe · \(statusTitle)"
   }
 

@@ -80,7 +80,9 @@ struct SettingsContentView: View {
 
         HStack(spacing: 12) {
           ThemedTextField(
-            placeholder: settings.apiProvider.keyPlaceholder,
+            placeholder: settings.hasAPIKey && apiKey.isEmpty
+              ? "Key saved — paste a new one to replace"
+              : settings.apiProvider.keyPlaceholder,
             text: $apiKey,
             isSecure: true,
             onSubmit: saveAPIKey
@@ -91,24 +93,14 @@ struct SettingsContentView: View {
           .buttonStyle(RecordActionButtonStyle())
         }
 
-        HStack(spacing: 8) {
-          Image(
-            systemName: settings.hasAPIKey
-              ? "checkmark.circle.fill"
-              : "circle"
-          )
-          .foregroundStyle(
-            settings.hasAPIKey ? AppTheme.success : AppTheme.faintText
-          )
-          Text(
-            keyStatus.isEmpty
-              ? (settings.hasAPIKey
-                ? "\(settings.apiProvider.title) key saved. Paste a new key to replace it."
-                : "Paste your \(settings.apiProvider.title) API key here, then Save Key")
-              : keyStatus
-          )
-          .font(.system(size: 12))
-          .foregroundStyle(AppTheme.secondaryText)
+        if !keyStatus.isEmpty {
+          Text(keyStatus)
+            .font(.system(size: 12))
+            .foregroundStyle(AppTheme.secondaryText)
+        } else if !settings.hasAPIKey {
+          Text("Paste your \(settings.apiProvider.title) API key here, then Save Key")
+            .font(.system(size: 12))
+            .foregroundStyle(AppTheme.secondaryText)
         }
 
         Button {

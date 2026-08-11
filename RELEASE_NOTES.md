@@ -1,5 +1,7 @@
-## ListenToMe 0.3.29
+## ListenToMe 0.3.30
 
-- Fix Space-to-lock while holding the shortcut (works with modifiers held; was a bare Carbon Space hotkey that never matched)
-- Overlay disappears as soon as you finish — no lingering through paste
-- Setup toggles for tap-to-keep-listening, hold-to-talk, and Space-lock — still one shortcut
+- Menu bar: orange waveform while listening (no more black circle)
+- Compact window with top tabs — removed the hide-sidebar control
+- API key field shows “Key saved” in place instead of an empty box + status line
+- Space-to-lock uses a CGEvent tap so it works while the shortcut is held
+- Clearer OpenRouter note: batch only, no warm WebSocket (OpenAI keeps the live socket)

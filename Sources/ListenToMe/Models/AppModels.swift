@@ -212,9 +212,9 @@ enum APIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
   var dictationModeNote: String {
     switch self {
     case .openAI:
-      "Live transcription while you speak, then a final polish when you stop."
+      "Live transcription over a warm OpenAI realtime WebSocket while you speak, then a final polish when you stop."
     case .openRouter:
-      "Records locally, then transcribes when you stop. History reprocess works the same way."
+      "No live WebSocket — audio is recorded locally and transcribed when you stop (batch). History reprocess works the same way."
     }
   }
 }
