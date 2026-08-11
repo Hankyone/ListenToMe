@@ -24,9 +24,10 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(micProfile.rawValue, forKey: Keys.micProfile) }
   }
 
-  /// CoreAudio device UID; empty string follows the system default input.
-  @Published var microphoneDeviceUID: String {
-    didSet { defaults.set(microphoneDeviceUID, forKey: Keys.microphoneDeviceUID) }
+  /// Preferred microphones in order — first available device wins at capture time.
+  /// Empty string entries mean “System Default”.
+  @Published var microphonePriorityUIDs: [String] {
+    didSet { defaults.set(microphonePriorityUIDs, forKey: Keys.microphonePriorityUIDs) }
   }
 
   @Published var apiProvider: APIProvider {
@@ -64,6 +65,7 @@ final class SettingsStore: ObservableObject {
     static let vocabulary = "transcription.vocabulary"
     static let micProfile = "transcription.micProfile"
     static let microphoneDeviceUID = "audio.microphoneDeviceUID"
+    static let microphonePriorityUIDs = "audio.microphonePriorityUIDs"
     static let apiProvider = "transcription.apiProvider"
     static let hotkey = "hotkey.spec"
   }
@@ -89,9 +91,22 @@ final class SettingsStore: ObservableObject {
       MicProfile(
         rawValue: defaults.string(forKey: Keys.micProfile) ?? ""
       ) ?? .builtIn
-    microphoneDeviceUID =
-      defaults.string(forKey: Keys.microphoneDeviceUID)
-      ?? MicrophoneInput.systemDefaultID
+    let migratedPriority: [String]
+    if let stored = defaults.array(forKey: Keys.microphonePriorityUIDs) as? [String],
+      !stored.isEmpty
+    {
+      migratedPriority = stored
+    } else if let legacy = defaults.string(forKey: Keys.microphoneDeviceUID) {
+      // Migrate the old single-mic setting into a priority list.
+      migratedPriority =
+        legacy == MicrophoneInput.systemDefaultID
+        ? [MicrophoneInput.systemDefaultID]
+        : [legacy, MicrophoneInput.systemDefaultID]
+      defaults.set(migratedPriority, forKey: Keys.microphonePriorityUIDs)
+    } else {
+      migratedPriority = [MicrophoneInput.systemDefaultID]
+    }
+    microphonePriorityUIDs = migratedPriority
     apiProvider =
       APIProvider(
         rawValue: defaults.string(forKey: Keys.apiProvider) ?? ""
@@ -151,6 +166,56 @@ final class SettingsStore: ObservableObject {
 
   var selectedEngineIsReady: Bool {
     hasAPIKey
+  }
+
+  /// First microphone in the priority list that is currently attached (or System Default).
+  func preferredMicrophoneUID(
+    from available: [MicrophoneInput] = MicrophoneInputCatalog.listInputs()
+  ) -> String {
+    let availableIDs = Set(available.map(\.id))
+    for uid in microphonePriorityUIDs {
+      if uid == MicrophoneInput.systemDefaultID {
+        return uid
+      }
+      if availableIDs.contains(uid) {
+        return uid
+      }
+    }
+    return MicrophoneInput.systemDefaultID
+  }
+
+  func addMicrophoneToPriority(_ uid: String) {
+    guard !microphonePriorityUIDs.contains(uid) else { return }
+    // Keep System Default as the last fallback when inserting real devices.
+    if uid == MicrophoneInput.systemDefaultID {
+      microphonePriorityUIDs.append(uid)
+      return
+    }
+    if let defaultIndex = microphonePriorityUIDs.firstIndex(
+      of: MicrophoneInput.systemDefaultID
+    ) {
+      microphonePriorityUIDs.insert(uid, at: defaultIndex)
+    } else {
+      microphonePriorityUIDs.append(uid)
+    }
+  }
+
+  func removeMicrophoneFromPriority(at index: Int) {
+    guard microphonePriorityUIDs.indices.contains(index) else { return }
+    microphonePriorityUIDs.remove(at: index)
+    if microphonePriorityUIDs.isEmpty {
+      microphonePriorityUIDs = [MicrophoneInput.systemDefaultID]
+    }
+  }
+
+  func moveMicrophonePriority(from index: Int, direction: Int) {
+    let target = index + direction
+    guard microphonePriorityUIDs.indices.contains(index),
+      microphonePriorityUIDs.indices.contains(target)
+    else {
+      return
+    }
+    microphonePriorityUIDs.swapAt(index, target)
   }
 
   var isUsingDefaultBasePrompt: Bool {

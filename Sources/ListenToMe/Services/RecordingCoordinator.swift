@@ -289,7 +289,7 @@ final class RecordingCoordinator: ObservableObject {
 
     try audioCapture.start(
       recordingURL: recordingURL,
-      deviceUID: settings.microphoneDeviceUID,
+      deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { [weak self] data in
         self?.audioContinuation?.yield(data)
       },
@@ -309,7 +309,7 @@ final class RecordingCoordinator: ObservableObject {
   private func startBatchCapture(recordingURL: URL) throws {
     try audioCapture.start(
       recordingURL: recordingURL,
-      deviceUID: settings.microphoneDeviceUID,
+      deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { _ in },
       onLevel: { [weak self] level in
         DispatchQueue.main.async {

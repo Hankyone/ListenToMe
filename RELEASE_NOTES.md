@@ -1,6 +1,5 @@
-## ListenToMe 0.3.21
+## ListenToMe 0.3.22
 
-- Choose which microphone to use in Setup
-- Start listening immediately on hotkey (no more waiting on media-pause scripts)
-- Preload the recording panel; keep transcripts on the clipboard so paste doesn’t race
-- Check for Updates from Setup
+- Status menu icons show again (and History / Words are in the menu)
+- Prefer microphones in order — docked USB first, built-in when you’re away
+- Writing guidance, languages, and response timing live under Words with custom vocabulary

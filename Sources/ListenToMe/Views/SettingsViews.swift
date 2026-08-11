@@ -43,9 +43,6 @@ struct SettingsContentView: View {
       apiKey = ""
       keyStatus = ""
       microphones = MicrophoneInputCatalog.listInputs()
-      if !microphones.contains(where: { $0.id == settings.microphoneDeviceUID }) {
-        settings.microphoneDeviceUID = MicrophoneInput.systemDefaultID
-      }
       settings.refreshAPIKeyPresence()
       permissions.refresh()
       permissions.startVisibilityMonitoring()
@@ -151,116 +148,44 @@ struct SettingsContentView: View {
   }
 
   private var voiceSection: some View {
-    SettingsSection(title: "Voice and context") {
+    SettingsSection(title: "Microphone") {
       VStack(alignment: .leading, spacing: 16) {
+        Text(
+          "Try microphones in order. Docked with a USB mic? Put it first. Away from the desk? Built-in is used when the USB mic isn’t plugged in."
+        )
+        .font(.system(size: 12))
+        .foregroundStyle(AppTheme.secondaryText)
+        .fixedSize(horizontal: false, vertical: true)
+
+        MicrophonePriorityEditor(
+          settings: settings,
+          microphones: microphones
+        )
+
         VStack(alignment: .leading, spacing: 6) {
-          Text("Microphone")
+          Text("Noise reduction")
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(AppTheme.primaryText)
-          Picker("", selection: $settings.microphoneDeviceUID) {
-            ForEach(microphones) { device in
-              Text(device.name).tag(device.id)
+          Picker("", selection: $settings.micProfile) {
+            ForEach(MicProfile.allCases) { profile in
+              Text(profile.title).tag(profile)
             }
           }
           .labelsHidden()
-          .frame(maxWidth: 320, alignment: .leading)
-          Text("Used for every dictation. System Default follows macOS Sound settings.")
-            .font(.system(size: 11))
-            .foregroundStyle(AppTheme.faintText)
-        }
-
-        VStack(alignment: .leading, spacing: 6) {
-          HStack {
-            Text("Writing guidance")
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(AppTheme.primaryText)
-            Spacer()
-            Button("Reset to default") {
-              settings.resetBasePrompt()
-            }
-            .buttonStyle(QuietButtonStyle())
-            .disabled(settings.isUsingDefaultBasePrompt)
-          }
-          TextEditor(text: $settings.basePrompt)
-            .font(.system(size: 13))
-            .frame(minHeight: 92)
-            .scrollContentBackground(.hidden)
-            .padding(9)
-            .background(
-              ChamferedPlate(cut: 7)
-                .fill(AppTheme.background)
-            )
+          .frame(width: 200)
+          .disabled(settings.apiProvider != .openAI)
           Text(
-            "Sent with every dictation, along with your custom words and the app you are speaking into."
+            settings.apiProvider == .openAI
+              ? settings.micProfile.explanation
+              : "Noise reduction is applied by OpenAI live sessions only."
           )
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.faintText)
         }
 
-        Picker("Response", selection: $settings.delay) {
-          ForEach(TranscriptionDelay.allCases) { delay in
-            Text(delay.title).tag(delay)
-          }
-        }
-        .pickerStyle(.segmented)
-        .disabled(settings.apiProvider != .openAI)
-
-        Text(
-          settings.apiProvider == .openAI
-            ? settings.delay.explanation
-            : "Response timing applies to OpenAI live transcription only."
-        )
-        .font(.system(size: 12))
-        .foregroundStyle(AppTheme.secondaryText)
-
-        HStack(spacing: 24) {
-          VStack(alignment: .leading, spacing: 6) {
-            Text("Noise reduction")
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(AppTheme.primaryText)
-            Picker("", selection: $settings.micProfile) {
-              ForEach(MicProfile.allCases) { profile in
-                Text(profile.title).tag(profile)
-              }
-            }
-            .labelsHidden()
-            .frame(width: 170)
-            .disabled(settings.apiProvider != .openAI)
-            Text(
-              settings.apiProvider == .openAI
-                ? settings.micProfile.explanation
-                : "Noise reduction is applied by OpenAI live sessions only."
-            )
-            .font(.system(size: 11))
-            .foregroundStyle(AppTheme.faintText)
-          }
-
-          VStack(alignment: .leading, spacing: 6) {
-            Text("Expected languages")
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(AppTheme.primaryText)
-            ThemedTextField(
-              placeholder: "en, fr",
-              text: $settings.languageText,
-              onSubmit: { settings.normalizeLanguageTextIfNeeded() },
-              onEditingEnded: { settings.normalizeLanguageTextIfNeeded() }
-            )
-            .frame(width: 170)
-            Text(
-              settings.languageHints.message
-                ?? "Comma-separated ISO codes (en, fr). Not regional tags like fr-CA. Empty for no hint."
-            )
-            .font(.system(size: 11))
-            .foregroundStyle(
-              settings.languageHints.message == nil
-                ? AppTheme.faintText
-                : (settings.languageHints.isBlocking
-                  ? AppTheme.accent
-                  : AppTheme.secondaryText)
-            )
-            .fixedSize(horizontal: false, vertical: true)
-          }
-        }
+        Text("Writing guidance, languages, and response timing live under Words.")
+          .font(.system(size: 11))
+          .foregroundStyle(AppTheme.faintText)
       }
     }
   }
@@ -321,6 +246,117 @@ struct SettingsContentView: View {
     } catch {
       keyStatus = error.localizedDescription
     }
+  }
+}
+
+private struct MicrophonePriorityEditor: View {
+  @ObservedObject var settings: SettingsStore
+  let microphones: [MicrophoneInput]
+  @State private var deviceToAdd = MicrophoneInput.systemDefaultID
+
+  private var nameByID: [String: String] {
+    Dictionary(uniqueKeysWithValues: microphones.map { ($0.id, $0.name) })
+  }
+
+  private var addableDevices: [MicrophoneInput] {
+    microphones.filter { !settings.microphonePriorityUIDs.contains($0.id) }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      ForEach(Array(settings.microphonePriorityUIDs.enumerated()), id: \.offset) {
+        index,
+        uid in
+        HStack(spacing: 10) {
+          Text("\(index + 1).")
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(AppTheme.faintText)
+            .frame(width: 22, alignment: .trailing)
+          Text(displayName(for: uid))
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(AppTheme.primaryText)
+            .lineLimit(1)
+          if !isCurrentlyAvailable(uid) && uid != MicrophoneInput.systemDefaultID {
+            Text("Unplugged")
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(AppTheme.accent)
+          }
+          Spacer(minLength: 8)
+          Button {
+            settings.moveMicrophonePriority(from: index, direction: -1)
+          } label: {
+            Image(systemName: "chevron.up")
+          }
+          .buttonStyle(QuietButtonStyle())
+          .disabled(index == 0)
+          .accessibilityLabel("Move up")
+
+          Button {
+            settings.moveMicrophonePriority(from: index, direction: 1)
+          } label: {
+            Image(systemName: "chevron.down")
+          }
+          .buttonStyle(QuietButtonStyle())
+          .disabled(index == settings.microphonePriorityUIDs.count - 1)
+          .accessibilityLabel("Move down")
+
+          Button {
+            settings.removeMicrophoneFromPriority(at: index)
+          } label: {
+            Image(systemName: "minus.circle")
+          }
+          .buttonStyle(QuietButtonStyle(isDestructive: true))
+          .disabled(
+            settings.microphonePriorityUIDs.count == 1
+              && uid == MicrophoneInput.systemDefaultID
+          )
+          .accessibilityLabel("Remove")
+        }
+        .padding(.vertical, 4)
+      }
+
+      if !addableDevices.isEmpty {
+        HStack(spacing: 10) {
+          Picker("Add microphone", selection: $deviceToAdd) {
+            ForEach(addableDevices) { device in
+              Text(device.name).tag(device.id)
+            }
+          }
+          .labelsHidden()
+          .frame(maxWidth: 260, alignment: .leading)
+          .onAppear {
+            deviceToAdd = addableDevices.first?.id ?? MicrophoneInput.systemDefaultID
+          }
+          .onChange(of: addableDevices.map(\.id)) { _, ids in
+            if !ids.contains(deviceToAdd) {
+              deviceToAdd = ids.first ?? MicrophoneInput.systemDefaultID
+            }
+          }
+
+          Button("Add") {
+            settings.addMicrophoneToPriority(deviceToAdd)
+          }
+          .buttonStyle(QuietButtonStyle())
+        }
+      }
+
+      Text(
+        "Active now: \(displayName(for: settings.preferredMicrophoneUID(from: microphones)))"
+      )
+      .font(.system(size: 11))
+      .foregroundStyle(AppTheme.faintText)
+    }
+  }
+
+  private func displayName(for uid: String) -> String {
+    if uid == MicrophoneInput.systemDefaultID {
+      return "System Default"
+    }
+    return nameByID[uid] ?? "Unknown microphone"
+  }
+
+  private func isCurrentlyAvailable(_ uid: String) -> Bool {
+    microphones.contains(where: { $0.id == uid })
   }
 }
 

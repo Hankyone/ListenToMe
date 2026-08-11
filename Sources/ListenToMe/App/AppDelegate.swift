@@ -383,11 +383,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     menu.addItem(.separator())
     addMenuItem(
+      "History",
+      symbolName: "clock.arrow.circlepath",
+      action: #selector(openHistory),
+      to: menu
+    )
+    addMenuItem(
+      "Words",
+      symbolName: "text.book.closed",
+      action: #selector(openVocabulary),
+      to: menu
+    )
+    addMenuItem(
       "Setup…",
       symbolName: "slider.horizontal.3",
       action: #selector(openSetup),
       to: menu
     )
+    menu.addItem(.separator())
     let checkForUpdates = addMenuItem(
       "Check for Updates…",
       symbolName: "arrow.triangle.2.circlepath",
@@ -417,13 +430,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
     item.target = self
     if let symbolName,
-      let image = NSImage(
-        systemSymbolName: symbolName,
+      let image = StatusMenuIcon.image(
+        systemName: symbolName,
         accessibilityDescription: title
       )
     {
-      image.isTemplate = true
       item.image = image
+      if #available(macOS 27.0, *) {
+        item.preferredImageVisibility = .visible
+      }
     }
     return item
   }
