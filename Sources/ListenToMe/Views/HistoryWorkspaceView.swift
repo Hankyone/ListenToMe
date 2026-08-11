@@ -30,7 +30,6 @@ private struct HistoryListView: View {
   @ObservedObject var history: HistoryStore
   @Binding var selectedID: UUID?
   let hotkeyDisplay: String
-  @State private var query = ""
 
   var body: some View {
     VStack(spacing: 0) {
@@ -39,7 +38,7 @@ private struct HistoryListView: View {
           .font(.system(size: 24, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
         Spacer()
-        Text("\(filteredEntries.count)")
+        Text("\(history.entries.count)")
           .font(.system(size: 12, weight: .medium, design: .monospaced))
           .foregroundStyle(AppTheme.faintText)
       }
@@ -47,13 +46,10 @@ private struct HistoryListView: View {
       .padding(.top, 20)
       .padding(.bottom, 10)
 
-      if filteredEntries.isEmpty {
-        EmptyHistoryView(
-          isSearching: !query.isEmpty,
-          hotkeyDisplay: hotkeyDisplay
-        )
+      if history.entries.isEmpty {
+        EmptyHistoryView(hotkeyDisplay: hotkeyDisplay)
       } else {
-        List(filteredEntries, selection: $selectedID) { entry in
+        List(history.entries, selection: $selectedID) { entry in
           HistoryRow(entry: entry)
             .tag(entry.id)
             .listRowSeparator(.hidden)
@@ -85,17 +81,7 @@ private struct HistoryListView: View {
         .scrollContentBackground(.hidden)
       }
     }
-    .searchable(text: $query, prompt: "Search your words")
     .background(AppTheme.surface)
-  }
-
-  private var filteredEntries: [HistoryEntry] {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return history.entries }
-    return history.entries.filter {
-      $0.transcript.localizedCaseInsensitiveContains(trimmed)
-        || $0.shortTargetName.localizedCaseInsensitiveContains(trimmed)
-    }
   }
 }
 
@@ -131,28 +117,21 @@ private struct HistoryRow: View {
 }
 
 private struct EmptyHistoryView: View {
-  let isSearching: Bool
   let hotkeyDisplay: String
 
   var body: some View {
     VStack(spacing: 18) {
       SpeechToCursorMark()
         .frame(width: 78, height: 42)
+      Text("Your words land here.")
+        .font(.system(size: 18, weight: .semibold))
+        .foregroundStyle(AppTheme.primaryText)
       Text(
-        isSearching
-          ? "Nothing matches that search."
-          : "Your words land here."
+        "Press \(hotkeyDisplay), speak, then release. Space locks hands-free; press the shortcut again to finish."
       )
-      .font(.system(size: 18, weight: .semibold))
-      .foregroundStyle(AppTheme.primaryText)
-      if !isSearching {
-        Text(
-          "Press \(hotkeyDisplay), speak, then release. Space locks hands-free; press the shortcut again to finish."
-        )
-          .font(.system(size: 13))
-          .foregroundStyle(AppTheme.secondaryText)
-          .multilineTextAlignment(.center)
-      }
+      .font(.system(size: 13))
+      .foregroundStyle(AppTheme.secondaryText)
+      .multilineTextAlignment(.center)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(28)
@@ -194,7 +173,9 @@ private struct HistoryDetailView: View {
   }
 
   private func detail(_ entry: HistoryEntry) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
+    let isReprocessing = recording.reprocessingID == entry.id
+
+    return VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .top, spacing: 18) {
         VStack(alignment: .leading, spacing: 5) {
           Text(
@@ -226,6 +207,20 @@ private struct HistoryDetailView: View {
           )
         }
         .buttonStyle(QuietButtonStyle())
+        .disabled(isReprocessing)
+
+        Button {
+          Task {
+            await recording.reprocessHistoryEntry(id: entry.id)
+          }
+        } label: {
+          Label(
+            isReprocessing ? "Reprocessing…" : "Reprocess",
+            systemImage: "arrow.triangle.2.circlepath"
+          )
+        }
+        .buttonStyle(QuietButtonStyle())
+        .disabled(isReprocessing || recording.phase.isBusy)
 
         Button {
           history.remove(id: entry.id)
@@ -234,15 +229,21 @@ private struct HistoryDetailView: View {
           Label("Trash", systemImage: "trash")
         }
         .buttonStyle(QuietButtonStyle(isDestructive: true))
+        .disabled(isReprocessing)
       }
       .padding(.horizontal, 28)
       .padding(.top, 26)
       .padding(.bottom, 18)
 
-      PlaybackBar(
-        playback: playback,
-        duration: entry.duration
-      )
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Original recording")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(AppTheme.secondaryText)
+        PlaybackBar(
+          playback: playback,
+          duration: entry.duration
+        )
+      }
       .padding(.horizontal, 28)
       .onAppear {
         playback.load(history.audioURL(for: entry))
@@ -258,6 +259,7 @@ private struct HistoryDetailView: View {
       .lineSpacing(5)
       .foregroundStyle(AppTheme.primaryText)
       .scrollContentBackground(.hidden)
+      .disabled(isReprocessing)
       .padding(22)
       .background(
         ChamferedPlate(cut: 10)
@@ -270,6 +272,7 @@ private struct HistoryDetailView: View {
       .padding(.horizontal, 28)
       .padding(.top, 14)
       .padding(.bottom, 28)
+      .opacity(isReprocessing ? 0.65 : 1)
     }
   }
 

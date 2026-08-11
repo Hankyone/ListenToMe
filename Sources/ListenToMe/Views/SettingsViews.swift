@@ -1,3 +1,5 @@
+import AppKit
+import PermissionFlow
 import SwiftUI
 
 struct SettingsContentView: View {
@@ -15,7 +17,7 @@ struct SettingsContentView: View {
             .font(.system(size: 28, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
           Text(
-            "OpenAI live transcription with your own API key. Nothing else runs."
+            "Your own API key, light polish, and a history you can replay or reprocess."
           )
           .font(.system(size: 13))
           .foregroundStyle(AppTheme.secondaryText)
@@ -27,23 +29,48 @@ struct SettingsContentView: View {
         permissionsSection
       }
       .padding(30)
-      .frame(maxWidth: 720, alignment: .leading)
     }
+    .frame(maxWidth: 720, alignment: .leading)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(AppTheme.background)
     .onAppear {
       // Field stays empty on purpose — paste a key to set or replace it.
       apiKey = ""
+      keyStatus = ""
+      settings.refreshAPIKeyPresence()
+      permissions.refresh()
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: NSApplication.didBecomeActiveNotification
+      )
+    ) { _ in
       permissions.refresh()
     }
   }
 
   private var keySection: some View {
-    SettingsSection(title: "OpenAI API key") {
+    SettingsSection(title: "API key") {
       VStack(alignment: .leading, spacing: 12) {
+        Picker("Provider", selection: $settings.apiProvider) {
+          ForEach(APIProvider.allCases) { provider in
+            Text(provider.title).tag(provider)
+          }
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: settings.apiProvider) { _, _ in
+          apiKey = ""
+          keyStatus = ""
+        }
+
+        Text(settings.apiProvider.dictationModeNote)
+          .font(.system(size: 12))
+          .foregroundStyle(AppTheme.secondaryText)
+          .fixedSize(horizontal: false, vertical: true)
+
         HStack(spacing: 12) {
           ThemedTextField(
-            placeholder: "OpenAI API key",
+            placeholder: settings.apiProvider.keyPlaceholder,
             text: $apiKey,
             isSecure: true,
             onSubmit: saveAPIKey
@@ -66,13 +93,25 @@ struct SettingsContentView: View {
           Text(
             keyStatus.isEmpty
               ? (settings.hasAPIKey
-                ? "Saved in ListenToMe. Paste a new key to replace it."
-                : "Paste your OpenAI Platform API key here, then Save Key")
+                ? "\(settings.apiProvider.title) key saved. Paste a new key to replace it."
+                : "Paste your \(settings.apiProvider.title) API key here, then Save Key")
               : keyStatus
           )
           .font(.system(size: 12))
           .foregroundStyle(AppTheme.secondaryText)
         }
+
+        Button {
+          NSWorkspace.shared.open(settings.apiProvider.createKeyURL)
+        } label: {
+          Label(
+            settings.apiProvider.createKeyLabel,
+            systemImage: "arrow.up.right.square"
+          )
+          .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppTheme.accent)
       }
     }
   }
@@ -83,7 +122,7 @@ struct SettingsContentView: View {
         HotkeyRecorderView(settings: settings)
 
         Text(
-          "Esc cancels a dictation in progress. If you change apps while OpenAI is finishing, the transcript is copied to the clipboard instead of being pasted into the wrong place."
+          "Esc cancels a dictation in progress. If you change apps while finishing, the transcript is copied to the clipboard instead of being pasted into the wrong place."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
@@ -102,9 +141,17 @@ struct SettingsContentView: View {
     SettingsSection(title: "Voice and context") {
       VStack(alignment: .leading, spacing: 16) {
         VStack(alignment: .leading, spacing: 6) {
-          Text("Writing guidance")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(AppTheme.primaryText)
+          HStack {
+            Text("Writing guidance")
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(AppTheme.primaryText)
+            Spacer()
+            Button("Reset to default") {
+              settings.resetBasePrompt()
+            }
+            .buttonStyle(QuietButtonStyle())
+            .disabled(settings.isUsingDefaultBasePrompt)
+          }
           TextEditor(text: $settings.basePrompt)
             .font(.system(size: 13))
             .frame(minHeight: 92)
@@ -115,7 +162,7 @@ struct SettingsContentView: View {
                 .fill(AppTheme.background)
             )
           Text(
-            "Sent with every dictation, along with your custom words and the name of the app you are speaking into."
+            "Sent with every dictation, along with your custom words and the app you are speaking into."
           )
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.faintText)
@@ -127,10 +174,15 @@ struct SettingsContentView: View {
           }
         }
         .pickerStyle(.segmented)
+        .disabled(settings.apiProvider != .openAI)
 
-        Text(settings.delay.explanation)
-          .font(.system(size: 12))
-          .foregroundStyle(AppTheme.secondaryText)
+        Text(
+          settings.apiProvider == .openAI
+            ? settings.delay.explanation
+            : "Response timing applies to OpenAI live transcription only."
+        )
+        .font(.system(size: 12))
+        .foregroundStyle(AppTheme.secondaryText)
 
         HStack(spacing: 24) {
           VStack(alignment: .leading, spacing: 6) {
@@ -144,9 +196,14 @@ struct SettingsContentView: View {
             }
             .labelsHidden()
             .frame(width: 170)
-            Text(settings.micProfile.explanation)
-              .font(.system(size: 11))
-              .foregroundStyle(AppTheme.faintText)
+            .disabled(settings.apiProvider != .openAI)
+            Text(
+              settings.apiProvider == .openAI
+                ? settings.micProfile.explanation
+                : "Noise reduction is applied by OpenAI live sessions only."
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(AppTheme.faintText)
           }
 
           VStack(alignment: .leading, spacing: 6) {
@@ -169,27 +226,28 @@ struct SettingsContentView: View {
 
   private var permissionsSection: some View {
     SettingsSection(title: "Mac permissions") {
-      VStack(spacing: 14) {
-        PermissionRow(
+      VStack(alignment: .leading, spacing: 16) {
+        Text(
+          "Grant opens the right System Settings pane. For Accessibility, a floating panel lets you drag ListenToMe into the list."
+        )
+        .font(.system(size: 12))
+        .foregroundStyle(AppTheme.secondaryText)
+        .fixedSize(horizontal: false, vertical: true)
+
+        PermissionGuidanceRow(
           title: "Microphone",
           detail: "Needed to hear your dictation",
-          granted: permissions.microphoneGranted,
-          buttonTitle: permissions.microphoneGranted ? "Allowed" : "Allow"
-        ) {
-          Task {
-            _ = await permissions.requestMicrophone()
-          }
-        }
+          pane: .microphone,
+          granted: permissions.microphoneGranted
+        )
 
-        PermissionRow(
+        PermissionGuidanceRow(
           title: "Accessibility",
           detail:
             "Needed to paste into the app where you started, and for hold-a-modifier shortcuts",
-          granted: permissions.accessibilityGranted,
-          buttonTitle: permissions.accessibilityGranted ? "Allowed" : "Allow"
-        ) {
-          permissions.requestAccessibility()
-        }
+          pane: .accessibility,
+          granted: permissions.accessibilityGranted
+        )
       }
     }
   }
@@ -200,7 +258,8 @@ struct SettingsContentView: View {
       keyStatus =
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "API key removed"
-        : "API key saved"
+        : "\(settings.apiProvider.title) API key saved"
+      apiKey = ""
     } catch {
       keyStatus = error.localizedDescription
     }
@@ -231,34 +290,66 @@ private struct SettingsSection<Content: View>: View {
   }
 }
 
-private struct PermissionRow: View {
+private struct PermissionGuidanceRow: View {
   let title: String
   let detail: String
+  let pane: PermissionFlowPane
   let granted: Bool
-  let buttonTitle: String
-  let action: () -> Void
+
+  private var appURL: URL { Bundle.main.bundleURL }
 
   var body: some View {
-    HStack(spacing: 12) {
-      Image(systemName: granted ? "checkmark.circle.fill" : "circle")
-        .foregroundStyle(granted ? AppTheme.success : AppTheme.faintText)
-        .font(.system(size: 16))
+    HStack(alignment: .center, spacing: 12) {
+      Image(
+        systemName: granted
+          ? "checkmark.circle.fill"
+          : "exclamationmark.circle"
+      )
+      .foregroundStyle(granted ? AppTheme.success : AppTheme.accent)
+      .font(.system(size: 16))
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(AppTheme.primaryText)
+        HStack(spacing: 8) {
+          Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(AppTheme.primaryText)
+          Text(granted ? "Allowed" : "Not allowed")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(granted ? AppTheme.success : AppTheme.accent)
+        }
         Text(detail)
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
       }
 
-      Spacer()
+      Spacer(minLength: 12)
 
-      Button(buttonTitle, action: action)
-        .buttonStyle(QuietButtonStyle())
-        .disabled(granted)
+      PermissionFlowButton(
+        pane: pane,
+        suggestedAppURLs: [appURL],
+        configuration: PermissionFlowConfiguration(
+          requiredAppURLs: [appURL],
+          promptForAccessibilityTrust: pane == .accessibility
+        )
+      ) { state in
+        HStack(spacing: 6) {
+          Image(systemName: state.systemImage)
+            .foregroundStyle(
+              state.isGranted ? AppTheme.success : AppTheme.accent
+            )
+          Text(state.defaultTitle)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(AppTheme.primaryText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(
+          ChamferedPlate(cut: 6)
+            .fill(AppTheme.raisedSurface)
+        )
+      }
+      .buttonStyle(.plain)
     }
   }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stores the OpenAI API key in ListenToMe's Application Support folder.
+/// Stores API keys in ListenToMe's Application Support folder.
 /// The only way a key appears here is the user pasting it in Setup.
 struct APIKeyStore {
   enum StoreError: LocalizedError {
@@ -17,21 +17,20 @@ struct APIKeyStore {
     }
   }
 
-  private let fileName = "openai-api-key"
   private let fileManager: FileManager
 
   init(fileManager: FileManager = .default) {
     self.fileManager = fileManager
   }
 
-  func saveAPIKey(_ value: String) throws {
+  func saveAPIKey(_ value: String, provider: APIProvider) throws {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
-      try deleteAPIKey()
+      try deleteAPIKey(provider: provider)
       return
     }
 
-    let url = try fileURL()
+    let url = try fileURL(for: provider)
     try fileManager.createDirectory(
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -48,13 +47,13 @@ struct APIKeyStore {
   }
 
   /// Whether a key file exists — does not read the secret.
-  func hasStoredKey() -> Bool {
-    guard let url = try? fileURL() else { return false }
+  func hasStoredKey(provider: APIProvider) -> Bool {
+    guard let url = try? fileURL(for: provider) else { return false }
     return fileManager.fileExists(atPath: url.path)
   }
 
-  func loadAPIKey() throws -> String? {
-    let url = try fileURL()
+  func loadAPIKey(provider: APIProvider) throws -> String? {
+    let url = try fileURL(for: provider)
     guard fileManager.fileExists(atPath: url.path) else {
       return nil
     }
@@ -72,13 +71,13 @@ struct APIKeyStore {
     }
   }
 
-  func deleteAPIKey() throws {
-    let url = try fileURL()
+  func deleteAPIKey(provider: APIProvider) throws {
+    let url = try fileURL(for: provider)
     guard fileManager.fileExists(atPath: url.path) else { return }
     try fileManager.removeItem(at: url)
   }
 
-  private func fileURL() throws -> URL {
+  private func fileURL(for provider: APIProvider) throws -> URL {
     guard
       let root = fileManager.urls(
         for: .applicationSupportDirectory,
@@ -89,6 +88,6 @@ struct APIKeyStore {
     }
     return root
       .appendingPathComponent("ca.hankyone.ListenToMe", isDirectory: true)
-      .appendingPathComponent(fileName, isDirectory: false)
+      .appendingPathComponent(provider.keyFileName, isDirectory: false)
   }
 }

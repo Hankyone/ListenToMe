@@ -25,40 +25,8 @@ struct RootView: View {
     .frame(minWidth: 840, minHeight: 560)
     .preferredColorScheme(.dark)
     .tint(AppTheme.accent)
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          Task {
-            await model.toggleRecording()
-          }
-        } label: {
-          HStack(spacing: 7) {
-            Image(
-              systemName: recording.phase.isRecording
-                ? "stop.fill"
-                : "record.circle"
-            )
-            Text(recording.phase.isRecording ? "Stop" : "Dictate")
-          }
-        }
-        .buttonStyle(
-          RecordActionButtonStyle(
-            isRecording: recording.phase.isRecording
-          )
-        )
-        .disabled(
-          recording.phase == .connecting
-            || recording.phase == .finishing
-        )
-        .accessibilityLabel(
-          recording.phase.isRecording
-            ? "Stop dictation"
-            : "Start dictation"
-        )
-      }
-    }
     .alert(
-      "Dictation stopped",
+      "Something went wrong",
       isPresented: Binding(
         get: { recording.errorMessage != nil },
         set: { isPresented in

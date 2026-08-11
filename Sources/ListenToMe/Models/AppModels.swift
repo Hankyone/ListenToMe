@@ -161,6 +161,71 @@ enum MicProfile: String, CaseIterable, Identifiable, Codable, Sendable {
   }
 }
 
+enum APIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
+  case openAI
+  case openRouter
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .openAI: "OpenAI"
+    case .openRouter: "OpenRouter"
+    }
+  }
+
+  var keyPlaceholder: String {
+    switch self {
+    case .openAI: "sk-…"
+    case .openRouter: "sk-or-…"
+    }
+  }
+
+  var createKeyURL: URL {
+    switch self {
+    case .openAI:
+      URL(string: "https://platform.openai.com/api-keys")!
+    case .openRouter:
+      URL(string: "https://openrouter.ai/keys")!
+    }
+  }
+
+  var createKeyLabel: String {
+    switch self {
+    case .openAI: "Create an OpenAI API key"
+    case .openRouter: "Create an OpenRouter API key"
+    }
+  }
+
+  /// Live partial transcripts need OpenAI's realtime websocket.
+  var supportsLiveStreaming: Bool {
+    self == .openAI
+  }
+
+  var keyFileName: String {
+    switch self {
+    case .openAI: "openai-api-key"
+    case .openRouter: "openrouter-api-key"
+    }
+  }
+
+  var dictationModeNote: String {
+    switch self {
+    case .openAI:
+      "Live transcription while you speak, then a final polish when you stop."
+    case .openRouter:
+      "Records locally, then transcribes when you stop. History reprocess works the same way."
+    }
+  }
+}
+
+enum WritingGuidance {
+  static let defaultBasePrompt = """
+    Lightly polish spoken dictation into clean written text. Keep the speaker's meaning and wording; do not invent content. Add natural punctuation and capitalization — these are not spoken aloud. Remove filler such as um, uh, er, and filler uses of like and you know. Prefer exact spellings from the custom-word list and surrounding context for names and technical terms. When the text continues typing in place, end with one trailing space.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 struct TranscriptionConfiguration: Equatable, Sendable {
   var basePrompt: String
   var vocabulary: [VocabularyItem]
@@ -207,7 +272,7 @@ struct TranscriptionConfiguration: Equatable, Sendable {
 
     parts.append(
       """
-      If the speaker says "correction", "scratch that", or "I mean" and then restates something, treat that as an edit: replace the immediately preceding wrong phrase with the restatement. Do not keep the cue words or the discarded phrase in the transcript. Continue with whatever they say next. Strip filler sounds and keep the final text paste-ready.
+      If the speaker says "correction", "scratch that", or "I mean" and then restates something, treat that as an edit: replace the immediately preceding wrong phrase with the restatement. Do not keep the cue words or the discarded phrase in the transcript. Continue with whatever they say next. Keep the final text paste-ready.
       """
         .trimmingCharacters(in: .whitespacesAndNewlines)
     )

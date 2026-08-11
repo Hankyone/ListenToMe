@@ -11,13 +11,18 @@ let package = Package(
     .executable(name: "ListenToMe", targets: ["ListenToMe"])
   ],
   dependencies: [
-    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+    .package(
+      url: "https://github.com/jaywcjlove/PermissionFlow.git",
+      from: "2.9.0"
+    ),
   ],
   targets: [
     .executableTarget(
       name: "ListenToMe",
       dependencies: [
-        .product(name: "Sparkle", package: "Sparkle")
+        .product(name: "Sparkle", package: "Sparkle"),
+        .product(name: "PermissionFlow", package: "PermissionFlow"),
       ],
       path: "Sources/ListenToMe",
       linkerSettings: [

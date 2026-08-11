@@ -13,6 +13,7 @@ final class RecordingCoordinator: ObservableObject {
   @Published private(set) var targetApplication: TargetApplication?
   /// Set when Space locks a push-to-talk hold into hands-free continuation.
   @Published private(set) var isHandsFreeLocked = false
+  @Published private(set) var reprocessingID: UUID?
   @Published var errorMessage: String?
 
   var onHistoryEntryCreated: ((UUID) -> Void)?
@@ -36,6 +37,8 @@ final class RecordingCoordinator: ObservableObject {
   private var startedAt: Date?
   private var didFinalizeCurrentRecording = false
   private var stopRequestedWhileStarting = false
+  /// When true, stop() uploads the CAF instead of waiting on a live websocket.
+  private var usesBatchTranscription = false
 
   init(
     settings: SettingsStore,
@@ -65,6 +68,7 @@ final class RecordingCoordinator: ObservableObject {
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
     isHandsFreeLocked = false
+    usesBatchTranscription = !settings.apiProvider.supportsLiveStreaming
     liveDraft.reset()
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
@@ -73,14 +77,17 @@ final class RecordingCoordinator: ObservableObject {
     do {
       apiKey = try settings.loadAPIKey()
     } catch {
-      fail("The OpenAI API key could not be read. Paste it again in Setup.")
+      fail(
+        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      )
       return
     }
     guard !apiKey.isEmpty else {
-      fail("Paste an OpenAI API key in Setup before dictating.")
+      fail(
+        "Paste a \(settings.apiProvider.title) API key in Setup before dictating."
+      )
       return
     }
-    let client = RealtimeTranscriptionClient(apiKey: apiKey)
 
     permissions.refresh()
     if !permissions.microphoneGranted {
@@ -95,55 +102,16 @@ final class RecordingCoordinator: ObservableObject {
     targetApplication = captureTargetApplication()
     mediaPause.begin()
 
-    // The microphone opens first so speech is never missed. Captured audio
-    // buffers in the stream while the OpenAI session opens alongside it.
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
       startedAt = Date()
-      self.client = client
 
-      let streamPair = AsyncStream<Data>.makeStream()
-      audioContinuation = streamPair.continuation
-
-      var configuration = settings.transcriptionConfiguration
-      configuration.targetAppName = targetApplication?.name
-
-      audioSendTask = Task { [weak self] in
-        do {
-          try await client.connect(configuration: configuration) {
-            [weak self] event in
-            self?.handle(event)
-          }
-          for await chunk in streamPair.stream {
-            try Task.checkCancellation()
-            try await client.appendAudio(chunk)
-          }
-        } catch is CancellationError {
-          return
-        } catch {
-          await MainActor.run { [weak self] in
-            self?.fail(error.localizedDescription)
-          }
-        }
+      if usesBatchTranscription {
+        try startBatchCapture(recordingURL: recordingURL)
+      } else {
+        try startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       }
-
-      try audioCapture.start(
-        recordingURL: recordingURL,
-        onPCMChunk: { [weak self] data in
-          self?.audioContinuation?.yield(data)
-        },
-        onLevel: { [weak self] level in
-          DispatchQueue.main.async {
-            self?.appendLevel(level)
-          }
-        },
-        onError: { [weak self] error in
-          DispatchQueue.main.async {
-            self?.fail(error.localizedDescription)
-          }
-        }
-      )
 
       phase = .recording
       startElapsedTimer()
@@ -190,6 +158,11 @@ final class RecordingCoordinator: ObservableObject {
     elapsedTask?.cancel()
     elapsedTask = nil
 
+    if usesBatchTranscription {
+      await stopBatchTranscription()
+      return
+    }
+
     if let remainder = audioCapture.stop() {
       audioContinuation?.yield(remainder)
     }
@@ -226,6 +199,143 @@ final class RecordingCoordinator: ObservableObject {
 
   func copyTranscript(_ text: String) {
     delivery.copy(text)
+  }
+
+  func reprocessHistoryEntry(id: UUID) async {
+    guard reprocessingID == nil else { return }
+    guard let entry = history.entry(id: id) else { return }
+
+    let apiKey: String
+    do {
+      apiKey = try settings.loadAPIKey()
+    } catch {
+      errorMessage =
+        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      return
+    }
+    guard !apiKey.isEmpty else {
+      errorMessage =
+        "Paste a \(settings.apiProvider.title) API key in Setup before reprocessing."
+      return
+    }
+
+    reprocessingID = id
+    defer { reprocessingID = nil }
+
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = entry.targetApplication?.name
+
+    do {
+      let text = try await FileTranscriptionService.transcribe(
+        audioURL: history.audioURL(for: entry),
+        provider: settings.apiProvider,
+        apiKey: apiKey,
+        prompt: configuration.prompt,
+        languages: configuration.languages
+      )
+      history.updateTranscript(id: id, transcript: text)
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func startLiveCapture(recordingURL: URL, apiKey: String) throws {
+    let client = RealtimeTranscriptionClient(apiKey: apiKey)
+    self.client = client
+
+    let streamPair = AsyncStream<Data>.makeStream()
+    audioContinuation = streamPair.continuation
+
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = targetApplication?.name
+
+    audioSendTask = Task { [weak self] in
+      do {
+        try await client.connect(configuration: configuration) {
+          [weak self] event in
+          self?.handle(event)
+        }
+        for await chunk in streamPair.stream {
+          try Task.checkCancellation()
+          try await client.appendAudio(chunk)
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        await MainActor.run { [weak self] in
+          self?.fail(error.localizedDescription)
+        }
+      }
+    }
+
+    try audioCapture.start(
+      recordingURL: recordingURL,
+      onPCMChunk: { [weak self] data in
+        self?.audioContinuation?.yield(data)
+      },
+      onLevel: { [weak self] level in
+        DispatchQueue.main.async {
+          self?.appendLevel(level)
+        }
+      },
+      onError: { [weak self] error in
+        DispatchQueue.main.async {
+          self?.fail(error.localizedDescription)
+        }
+      }
+    )
+  }
+
+  private func startBatchCapture(recordingURL: URL) throws {
+    try audioCapture.start(
+      recordingURL: recordingURL,
+      onPCMChunk: { _ in },
+      onLevel: { [weak self] level in
+        DispatchQueue.main.async {
+          self?.appendLevel(level)
+        }
+      },
+      onError: { [weak self] error in
+        DispatchQueue.main.async {
+          self?.fail(error.localizedDescription)
+        }
+      }
+    )
+  }
+
+  private func stopBatchTranscription() async {
+    _ = audioCapture.stop()
+
+    guard let recordingURL else {
+      fail("The recording file was missing.")
+      return
+    }
+
+    let apiKey: String
+    do {
+      apiKey = try settings.loadAPIKey()
+    } catch {
+      fail(
+        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      )
+      return
+    }
+
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = targetApplication?.name
+
+    do {
+      let text = try await FileTranscriptionService.transcribe(
+        audioURL: recordingURL,
+        provider: settings.apiProvider,
+        apiKey: apiKey,
+        prompt: configuration.prompt,
+        languages: configuration.languages
+      )
+      await finalize(transcript: text)
+    } catch {
+      fail(error.localizedDescription)
+    }
   }
 
   private func handle(_ event: TranscriptionClientEvent) {
@@ -402,5 +512,6 @@ final class RecordingCoordinator: ObservableObject {
     recordingURL = nil
     startedAt = nil
     targetApplication = nil
+    usesBatchTranscription = false
   }
 }

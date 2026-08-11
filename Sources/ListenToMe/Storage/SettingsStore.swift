@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class SettingsStore: ObservableObject {
+  static let defaultBasePrompt = WritingGuidance.defaultBasePrompt
+
   @Published var showRecordingOverlay: Bool {
     didSet { defaults.set(showRecordingOverlay, forKey: Keys.showRecordingOverlay) }
   }
@@ -20,6 +22,13 @@ final class SettingsStore: ObservableObject {
 
   @Published var micProfile: MicProfile {
     didSet { defaults.set(micProfile.rawValue, forKey: Keys.micProfile) }
+  }
+
+  @Published var apiProvider: APIProvider {
+    didSet {
+      defaults.set(apiProvider.rawValue, forKey: Keys.apiProvider)
+      refreshAPIKeyPresence()
+    }
   }
 
   @Published var hotkey: HotkeySpec {
@@ -49,6 +58,7 @@ final class SettingsStore: ObservableObject {
     static let languageText = "transcription.languages"
     static let vocabulary = "transcription.vocabulary"
     static let micProfile = "transcription.micProfile"
+    static let apiProvider = "transcription.apiProvider"
     static let hotkey = "hotkey.spec"
   }
 
@@ -63,10 +73,7 @@ final class SettingsStore: ObservableObject {
       ?? true
     basePrompt =
       defaults.string(forKey: Keys.basePrompt)
-      ?? """
-      Write natural, polished dictation. Keep the speaker's meaning, paragraph breaks, punctuation, and capitalization. Do not add ideas that were not spoken. Omit filler words such as um, uh, er, like (when filler), and you know. Prefer clean sentences. When the dictation is meant to continue typing in place, end with a single trailing space.
-      """
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+      ?? Self.defaultBasePrompt
     delay =
       TranscriptionDelay(
         rawValue: defaults.string(forKey: Keys.delay) ?? ""
@@ -76,6 +83,10 @@ final class SettingsStore: ObservableObject {
       MicProfile(
         rawValue: defaults.string(forKey: Keys.micProfile) ?? ""
       ) ?? .builtIn
+    apiProvider =
+      APIProvider(
+        rawValue: defaults.string(forKey: Keys.apiProvider) ?? ""
+      ) ?? .openAI
 
     if let data = defaults.data(forKey: Keys.hotkey),
       let stored = try? JSONDecoder().decode(HotkeySpec.self, from: data)
@@ -94,7 +105,7 @@ final class SettingsStore: ObservableObject {
     }
 
     // File presence only — never load the secret at launch.
-    hasAPIKey = apiKeys.hasStoredKey()
+    hasAPIKey = apiKeys.hasStoredKey(provider: apiProvider)
   }
 
   var languages: [String] {
@@ -118,8 +129,17 @@ final class SettingsStore: ObservableObject {
     hasAPIKey
   }
 
+  var isUsingDefaultBasePrompt: Bool {
+    basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+      == Self.defaultBasePrompt
+  }
+
+  func resetBasePrompt() {
+    basePrompt = Self.defaultBasePrompt
+  }
+
   func loadAPIKey() throws -> String {
-    let value = try apiKeys.loadAPIKey() ?? ""
+    let value = try apiKeys.loadAPIKey(provider: apiProvider) ?? ""
     let present = !value.isEmpty
     if hasAPIKey != present {
       hasAPIKey = present
@@ -128,8 +148,12 @@ final class SettingsStore: ObservableObject {
   }
 
   func saveAPIKey(_ value: String) throws {
-    try apiKeys.saveAPIKey(value)
+    try apiKeys.saveAPIKey(value, provider: apiProvider)
     hasAPIKey = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  func refreshAPIKeyPresence() {
+    hasAPIKey = apiKeys.hasStoredKey(provider: apiProvider)
   }
 
   func addVocabulary(term: String, oftenHeardAs: String) -> Bool {
