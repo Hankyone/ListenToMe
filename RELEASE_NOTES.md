@@ -1,3 +1,3 @@
-## ListenToMe 0.3.11
+## ListenToMe 0.3.12
 
-- Recent / error panel dismisses when you click away or press Escape
+- Recent / error panel dismisses on the first click away — no need to focus it first

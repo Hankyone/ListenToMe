@@ -8,7 +8,9 @@ final class StatusHistoryPanelController {
   private let onOpenHistory: () -> Void
   private let onOpenSetup: () -> Void
   private let panelWidth: CGFloat = 340
-  private var dismissalMonitors: [Any] = []
+  private var globalMouseMonitor: Any?
+  private var localEventMonitor: Any?
+  private var workspaceObserver: NSObjectProtocol?
   private weak var anchorButton: NSStatusBarButton?
 
   init(
@@ -20,9 +22,9 @@ final class StatusHistoryPanelController {
     self.onOpenHistory = onOpenHistory
     self.onOpenSetup = onOpenSetup
 
-    // Transient alone is unreliable for NSStatusItem anchors; we also install
-    // click-away monitors in show(_:).
-    popover.behavior = .transient
+    // Own dismissal ourselves. `.transient` only closes after the popover has
+    // become key — which means “click it, then click away.”
+    popover.behavior = .applicationDefined
     popover.animates = true
     popover.contentSize = NSSize(width: panelWidth, height: 220)
     remountContent()
@@ -48,8 +50,6 @@ final class StatusHistoryPanelController {
       of: button,
       preferredEdge: .minY
     )
-    // Helps AppKit treat the popover as the active transient surface.
-    popover.contentViewController?.view.window?.makeKey()
     startDismissalMonitoring()
   }
 
@@ -90,52 +90,76 @@ final class StatusHistoryPanelController {
   private func startDismissalMonitoring() {
     stopDismissalMonitoring()
 
-    let mouseHandler: (NSEvent) -> Void = { [weak self] event in
-      guard let self, self.popover.isShown else { return }
-      if self.isEventInsidePopoverOrAnchor(event) { return }
-      self.close()
+    // Global monitors run off the main thread and never see in-app events.
+    // Bounce to the main actor so close() is safe and actually runs.
+    globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+      matching: [.leftMouseDown, .rightMouseDown]
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.dismissFromOutsideInteraction()
+      }
     }
 
-    if let global = NSEvent.addGlobalMonitorForEvents(
-      matching: [.leftMouseDown, .rightMouseDown],
-      handler: mouseHandler
-    ) {
-      dismissalMonitors.append(global)
-    }
+    localEventMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.leftMouseDown, .rightMouseDown, .keyDown]
+    ) { [weak self] event in
+      guard let self else { return event }
 
-    if let local = NSEvent.addLocalMonitorForEvents(
-      matching: [.leftMouseDown, .rightMouseDown, .keyDown],
-      handler: { [weak self] event in
-        guard let self, self.popover.isShown else { return event }
-
-        if event.type == .keyDown {
-          // Escape
-          if event.keyCode == 53 {
-            self.close()
-            return nil
-          }
-          return event
+      if event.type == .keyDown {
+        if event.keyCode == 53 {  // Escape
+          self.close()
+          return nil
         }
-
-        if self.isEventInsidePopoverOrAnchor(event) {
-          return event
-        }
-        self.close()
         return event
       }
-    ) {
-      dismissalMonitors.append(local)
+
+      if self.isMouseInsidePopoverOrAnchor() {
+        return event
+      }
+      self.close()
+      return event
+    }
+
+    workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didActivateApplicationNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      guard
+        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+          as? NSRunningApplication,
+        app.bundleIdentifier != Bundle.main.bundleIdentifier
+      else {
+        return
+      }
+      Task { @MainActor in
+        self?.close()
+      }
     }
   }
 
   private func stopDismissalMonitoring() {
-    for monitor in dismissalMonitors {
-      NSEvent.removeMonitor(monitor)
+    if let globalMouseMonitor {
+      NSEvent.removeMonitor(globalMouseMonitor)
+      self.globalMouseMonitor = nil
     }
-    dismissalMonitors.removeAll()
+    if let localEventMonitor {
+      NSEvent.removeMonitor(localEventMonitor)
+      self.localEventMonitor = nil
+    }
+    if let workspaceObserver {
+      NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
+      self.workspaceObserver = nil
+    }
   }
 
-  private func isEventInsidePopoverOrAnchor(_ event: NSEvent) -> Bool {
+  private func dismissFromOutsideInteraction() {
+    guard popover.isShown else { return }
+    if isMouseInsidePopoverOrAnchor() { return }
+    close()
+  }
+
+  private func isMouseInsidePopoverOrAnchor() -> Bool {
     let screenPoint = NSEvent.mouseLocation
 
     if let popoverWindow = popover.contentViewController?.view.window,
@@ -144,9 +168,7 @@ final class StatusHistoryPanelController {
       return true
     }
 
-    if let button = anchorButton,
-      let buttonWindow = button.window
-    {
+    if let button = anchorButton, let buttonWindow = button.window {
       let rectInWindow = button.convert(button.bounds, to: nil)
       let rectOnScreen = buttonWindow.convertToScreen(rectInWindow)
       if rectOnScreen.contains(screenPoint) {
@@ -154,8 +176,6 @@ final class StatusHistoryPanelController {
       }
     }
 
-    // Keep the event available for local handling (e.g. status-item toggle).
-    _ = event
     return false
   }
 }
