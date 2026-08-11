@@ -17,7 +17,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        run: |
+          # PermissionFlow requires Swift tools 6.2+ (Xcode 26).
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+          swift --version
 
       - name: Read version from Info.plist
         id: version
