@@ -1,70 +1,30 @@
 #!/usr/bin/env python3
-"""Embed release notes into appcast.xml and drop external releaseNotesLink."""
+"""Ensure appcast release notes are inline markdown (not HTML / remote URL).
+
+Sparkle renders HTML descriptions in WKWebView, which cold-starts slowly and
+shows a spinner. Markdown/plain-text use NSTextView and appear immediately.
+"""
 
 from __future__ import annotations
 
-import html
 import pathlib
 import re
 import sys
 
 
-def markdown_to_simple_html(markdown: str) -> str:
-    lines = markdown.replace("\r\n", "\n").split("\n")
-    parts: list[str] = [
-        '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;'
-        'font-size:13px;line-height:1.45;">'
-    ]
-    in_list = False
-
-    def close_list() -> None:
-        nonlocal in_list
-        if in_list:
-            parts.append("</ul>")
-            in_list = False
-
-    for raw in lines:
-        line = raw.rstrip()
-        if not line.strip():
-            close_list()
-            continue
-
-        if line.startswith("## "):
-            close_list()
-            parts.append(f"<h2>{html.escape(line[3:].strip())}</h2>")
-            continue
-        if line.startswith("# "):
-            close_list()
-            parts.append(f"<h1>{html.escape(line[2:].strip())}</h1>")
-            continue
-        if line.startswith("- "):
-            if not in_list:
-                parts.append("<ul>")
-                in_list = True
-            parts.append(f"<li>{html.escape(line[2:].strip())}</li>")
-            continue
-
-        close_list()
-        parts.append(f"<p>{html.escape(line.strip())}</p>")
-
-    close_list()
-    parts.append("</div>")
-    return "\n".join(parts)
-
-
 def embed_notes(appcast_path: pathlib.Path, notes_path: pathlib.Path) -> None:
     appcast = appcast_path.read_text(encoding="utf-8")
-    notes_html = markdown_to_simple_html(notes_path.read_text(encoding="utf-8"))
+    notes_md = notes_path.read_text(encoding="utf-8").strip() + "\n"
 
-    # Prefer inline HTML so Sparkle never has to fetch a separate notes URL.
+    # Never leave a remote notes URL — that forces another network round-trip.
     appcast = re.sub(
-        r"[ \t]*<sparkle:releaseNotesLink>.*?</sparkle:releaseNotesLink>\n?",
+        r"[ \t]*<sparkle:releaseNotesLink\b.*?</sparkle:releaseNotesLink>\n?",
         "",
         appcast,
         flags=re.DOTALL,
     )
     appcast = re.sub(
-        r"[ \t]*<description>.*?</description>\n?",
+        r"[ \t]*<description\b.*?</description>\n?",
         "",
         appcast,
         flags=re.DOTALL,
@@ -75,9 +35,10 @@ def embed_notes(appcast_path: pathlib.Path, notes_path: pathlib.Path) -> None:
         raise SystemExit("appcast.xml is missing an enclosure element")
 
     indent = match.group(1)
+    # sparkle:format="markdown" → SUTextViewReleaseNotesView (no WKWebView).
     description = (
-        f"{indent}<description><![CDATA[\n"
-        f"{notes_html}\n"
+        f'{indent}<description sparkle:format="markdown"><![CDATA[\n'
+        f"{notes_md}"
         f"{indent}]]></description>\n"
     )
     appcast = appcast[: match.start()] + description + appcast[match.start() :]

@@ -138,14 +138,17 @@ cp "$RELEASE_DIR/$ZIP_NAME" "$SPARKLE_DIR/"
 cp "$NOTES_RELEASE_MD" "$SPARKLE_DIR/"
 
 print "Generating Sparkle appcast…"
+# --embed-release-notes inlines the matching .md as sparkle:format="markdown"
+# so the update alert can skip WKWebView (which is what made notes feel slow).
 "$SPARKLE_TOOLS_DIR/generate_appcast" \
     --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
     --download-url-prefix "$DOWNLOAD_PREFIX" \
+    --embed-release-notes \
     -o "$RELEASE_DIR/appcast.xml" \
     "$SPARKLE_DIR"
 rm -rf "$SPARKLE_DIR"
 
-# Inline the notes so the updater never depends on a separate download URL.
+# Normalize to inline markdown even if generate_appcast linked a notes URL.
 python3 "$PROJECT_DIR/Scripts/embed-appcast-notes.py" \
     "$RELEASE_DIR/appcast.xml" \
     "$NOTES_RELEASE_MD"
