@@ -32,6 +32,7 @@ struct StatusHistoryPanel: View {
       || notice.localizedCaseInsensitiveContains("shortcut")
       || notice.localizedCaseInsensitiveContains("setup")
       || notice.localizedCaseInsensitiveContains("permission")
+      || notice.localizedCaseInsensitiveContains("language")
   }
 
   var body: some View {
@@ -146,6 +147,8 @@ struct StatusHistoryPanel: View {
           Text(message)
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
+            .lineLimit(5)
+            .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
         }
         Spacer(minLength: 0)

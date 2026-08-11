@@ -73,6 +73,12 @@ final class RecordingCoordinator: ObservableObject {
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
 
+    let languageHints = settings.normalizeLanguageTextIfNeeded()
+    if languageHints.isBlocking, let message = languageHints.message {
+      fail(message)
+      return
+    }
+
     let apiKey: String
     do {
       apiKey = try settings.loadAPIKey()
@@ -209,13 +215,17 @@ final class RecordingCoordinator: ObservableObject {
     do {
       apiKey = try settings.loadAPIKey()
     } catch {
-      errorMessage =
-        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      errorMessage = UserFacingError.message(
+        from:
+          "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      )
       return
     }
     guard !apiKey.isEmpty else {
-      errorMessage =
-        "Paste a \(settings.apiProvider.title) API key in Setup before reprocessing."
+      errorMessage = UserFacingError.message(
+        from:
+          "Paste a \(settings.apiProvider.title) API key in Setup before reprocessing."
+      )
       return
     }
 
@@ -235,7 +245,7 @@ final class RecordingCoordinator: ObservableObject {
       )
       history.updateTranscript(id: id, transcript: text)
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(from: error.localizedDescription)
     }
   }
 
@@ -427,7 +437,7 @@ final class RecordingCoordinator: ObservableObject {
 
   private func fail(_ message: String) {
     guard phase != .failed else { return }
-    errorMessage = message
+    errorMessage = UserFacingError.message(from: message)
     isHandsFreeLocked = false
     phase = .failed
     teardownSession()

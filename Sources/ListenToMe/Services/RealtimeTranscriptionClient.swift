@@ -217,10 +217,11 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
 
     case "conversation.item.input_audio_transcription.failed", "error":
       let error = event["error"] as? [String: Any]
-      let message =
+      let raw =
         (error?["message"] as? String)
         ?? (event["message"] as? String)
         ?? "OpenAI could not complete this transcription."
+      let message = UserFacingError.message(from: raw)
       resolveReady(
         with: .failure(ClientError.serverRejected(message))
       )
@@ -237,18 +238,17 @@ actor RealtimeTranscriptionClient: TranscriptionClient {
   }
 
   private static func userFacingMessage(for error: Error) -> String {
-    let message = error.localizedDescription
-    if message.localizedCaseInsensitiveContains("401")
-      || message.localizedCaseInsensitiveContains("unauthorized")
-    {
-      return "OpenAI rejected the API key. Save a valid key in Setup."
+    if error is CancellationError {
+      return "The live transcription connection ended before the text was ready."
     }
-    if message.localizedCaseInsensitiveContains("internet")
-      || message.localizedCaseInsensitiveContains("network")
-      || message.localizedCaseInsensitiveContains("offline")
+    let mapped = UserFacingError.message(from: error.localizedDescription)
+    // URLError / CFNetwork strings are rarely useful for dictation failures.
+    if mapped.localizedCaseInsensitiveContains("NSURLError")
+      || mapped.localizedCaseInsensitiveContains("Code=-")
+      || mapped.localizedCaseInsensitiveContains("The operation couldn’t be completed")
     {
-      return "The OpenAI connection was lost. Your audio stayed on this Mac."
+      return "The live transcription connection ended before the text was ready."
     }
-    return "The live transcription connection ended before the text was ready."
+    return mapped
   }
 }

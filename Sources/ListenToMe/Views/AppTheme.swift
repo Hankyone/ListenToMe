@@ -118,6 +118,7 @@ struct ThemedTextField: View {
   @Binding var text: String
   var isSecure = false
   var onSubmit: (() -> Void)?
+  var onEditingEnded: (() -> Void)?
   @FocusState private var isFocused: Bool
 
   var body: some View {
@@ -135,6 +136,11 @@ struct ThemedTextField: View {
     .focusEffectDisabled()
     .onSubmit {
       onSubmit?()
+    }
+    .onChange(of: isFocused) { _, focused in
+      if !focused {
+        onEditingEnded?()
+      }
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 7)

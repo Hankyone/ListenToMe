@@ -108,11 +108,26 @@ final class SettingsStore: ObservableObject {
     hasAPIKey = apiKeys.hasStoredKey(provider: apiProvider)
   }
 
+  var languageHints: LanguageHintValidation.Result {
+    LanguageHintValidation.parse(languageText)
+  }
+
+  /// Codes actually sent to the API (invalid tokens omitted).
   var languages: [String] {
-    languageText
-      .split(separator: ",")
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-      .filter { !$0.isEmpty }
+    languageHints.codes
+  }
+
+  /// Rewrite regional tags (fr-CA → fr) and surface Setup feedback.
+  @discardableResult
+  func normalizeLanguageTextIfNeeded() -> LanguageHintValidation.Result {
+    let parsed = LanguageHintValidation.parse(
+      languageText,
+      finalizePending: true
+    )
+    if parsed.normalizedText != languageText {
+      languageText = parsed.normalizedText
+    }
+    return LanguageHintValidation.parse(languageText, finalizePending: true)
   }
 
   var transcriptionConfiguration: TranscriptionConfiguration {

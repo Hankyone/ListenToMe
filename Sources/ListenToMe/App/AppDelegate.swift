@@ -487,11 +487,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       )
       window.title = "ListenToMe"
       window.minSize = NSSize(width: 840, height: 560)
+      // Hard caps — never let SwiftUI content or a huge autosave frame
+      // stretch the window across a 4K display.
+      window.maxSize = NSSize(width: 1_600, height: 1_000)
       window.titlebarAppearsTransparent = false
-      // SwiftUI's default hosting options push ideal/max sizes into the window,
-      // so switching History/Words/Setup was resizing the frame. Keep only mins.
+      // Empty sizingOptions: content never drives the window frame.
       let hostingView = NSHostingView(rootView: rootView)
-      hostingView.sizingOptions = [.minSize]
+      hostingView.sizingOptions = []
       window.contentView = hostingView
       window.center()
       window.setFrameAutosaveName("ListenToMe.MainWindow")
@@ -500,9 +502,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       mainWindowController = controller
     }
 
+    if let window = controller.window {
+      window.maxSize = NSSize(width: 1_600, height: 1_000)
+      clampMainWindowFrame(window)
+    }
     NSApplication.shared.activate(ignoringOtherApps: true)
     controller.showWindow(nil)
     controller.window?.makeKeyAndOrderFront(nil)
+  }
+
+  private func clampMainWindowFrame(_ window: NSWindow) {
+    let screen = window.screen ?? NSScreen.main
+    let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1_440, height: 900)
+    let maxWidth = min(visible.width * 0.92, window.maxSize.width)
+    let maxHeight = min(visible.height * 0.90, window.maxSize.height)
+    var frame = window.frame
+    var changed = false
+    if frame.width > maxWidth {
+      frame.size.width = maxWidth
+      changed = true
+    }
+    if frame.height > maxHeight {
+      frame.size.height = maxHeight
+      changed = true
+    }
+    if frame.width < window.minSize.width {
+      frame.size.width = window.minSize.width
+      changed = true
+    }
+    if frame.height < window.minSize.height {
+      frame.size.height = window.minSize.height
+      changed = true
+    }
+    // Keep on-screen after shrinking a bad autosave.
+    if frame.maxX > visible.maxX {
+      frame.origin.x = visible.maxX - frame.width
+      changed = true
+    }
+    if frame.minX < visible.minX {
+      frame.origin.x = visible.minX
+      changed = true
+    }
+    if frame.maxY > visible.maxY {
+      frame.origin.y = visible.maxY - frame.height
+      changed = true
+    }
+    if frame.minY < visible.minY {
+      frame.origin.y = visible.minY
+      changed = true
+    }
+    if changed {
+      window.setFrame(frame, display: true)
+    }
   }
 
   private func presentErrorIfNeeded(_ message: String) {

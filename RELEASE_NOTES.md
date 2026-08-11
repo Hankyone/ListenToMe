@@ -1,3 +1,4 @@
-## ListenToMe 0.3.18
+## ListenToMe 0.3.19
 
-- Paste into the focused field more reliably (reactivate target, AX insert, then Cmd+V / AppleScript like Handy, VoiceInk, and Hex)
+- Validate language codes in Setup (fr-CA becomes fr) instead of failing when you dictate
+- Keep error notices short so they can’t stretch the main window on large displays

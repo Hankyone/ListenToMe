@@ -100,7 +100,9 @@ struct RootView: View {
         Text(message)
           .font(.system(size: 12))
           .foregroundStyle(AppTheme.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
+          .lineLimit(4)
+          .truncationMode(.tail)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
       Spacer(minLength: 8)
       Button("Open Setup") {
@@ -120,6 +122,7 @@ struct RootView: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
+    .frame(maxHeight: 110)
     .background(AppTheme.raisedSurface)
   }
 }

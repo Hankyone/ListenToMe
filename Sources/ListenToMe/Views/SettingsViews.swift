@@ -216,12 +216,24 @@ struct SettingsContentView: View {
               .foregroundStyle(AppTheme.primaryText)
             ThemedTextField(
               placeholder: "en, fr",
-              text: $settings.languageText
+              text: $settings.languageText,
+              onSubmit: { settings.normalizeLanguageTextIfNeeded() },
+              onEditingEnded: { settings.normalizeLanguageTextIfNeeded() }
             )
             .frame(width: 170)
-            Text("Comma-separated codes. Empty for no hint.")
-              .font(.system(size: 11))
-              .foregroundStyle(AppTheme.faintText)
+            Text(
+              settings.languageHints.message
+                ?? "Comma-separated ISO codes (en, fr). Not regional tags like fr-CA. Empty for no hint."
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(
+              settings.languageHints.message == nil
+                ? AppTheme.faintText
+                : (settings.languageHints.isBlocking
+                  ? AppTheme.accent
+                  : AppTheme.secondaryText)
+            )
+            .fixedSize(horizontal: false, vertical: true)
           }
         }
       }

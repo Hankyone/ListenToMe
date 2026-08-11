@@ -105,10 +105,13 @@ final class StatusHistoryPanelController {
       }
     )
     let controller = NSHostingController(rootView: root)
+    // Propose the max height we allow — some SwiftUI versions echo a huge
+    // proposed height back as the fitting size.
+    let maxHeight: CGFloat = 420
     let fitting = controller.sizeThatFits(
-      in: NSSize(width: panelWidth, height: 10_000)
+      in: NSSize(width: panelWidth, height: maxHeight)
     )
-    let height = min(max(fitting.height.rounded(.up), 72), 520)
+    let height = min(max(fitting.height.rounded(.up), 72), maxHeight)
     controller.view.frame = NSRect(x: 0, y: 0, width: panelWidth, height: height)
     panel.contentView = controller.view
     hostingController = controller
