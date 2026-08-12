@@ -95,4 +95,63 @@ final class HistoryStoreTests: XCTestCase {
     XCTAssertEqual(store.entries.count, 1)
     XCTAssertEqual(store.entries.first?.transcript, "Fresh take.")
   }
+
+  func testHasPreservableAudioIgnoresTinyFiles() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ListenToMeTests-\(UUID().uuidString)")
+    defer {
+      _ = try? FileManager.default.trashItem(
+        at: root,
+        resultingItemURL: nil
+      )
+    }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let tiny = root.appendingPathComponent("tiny.caf")
+    try Data(repeating: 0, count: 128).write(to: tiny)
+    XCTAssertFalse(HistoryStore.hasPreservableAudio(at: tiny))
+
+    let real = root.appendingPathComponent("real.caf")
+    try Data(repeating: 1, count: 8_192).write(to: real)
+    XCTAssertTrue(HistoryStore.hasPreservableAudio(at: real))
+    XCTAssertFalse(
+      HistoryStore.hasPreservableAudio(
+        at: root.appendingPathComponent("missing.caf")
+      )
+    )
+  }
+
+  func testAudioSavedOutcomeSurvivesReload() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ListenToMeTests-\(UUID().uuidString)")
+    defer {
+      _ = try? FileManager.default.trashItem(
+        at: root,
+        resultingItemURL: nil
+      )
+    }
+
+    let store = HistoryStore(rootURL: root)
+    let entry = HistoryEntry(
+      id: UUID(),
+      createdAt: Date(),
+      transcript: "",
+      duration: 12,
+      audioFileName: "kept.caf",
+      targetApplication: TargetApplication(
+        name: "Terminal",
+        bundleIdentifier: "com.apple.Terminal",
+        processIdentifier: 99
+      ),
+      deliveryOutcome: .audioSaved
+    )
+    store.add(entry)
+
+    let reloaded = HistoryStore(rootURL: root)
+    XCTAssertEqual(reloaded.entries.first?.deliveryOutcome, .audioSaved)
+    XCTAssertEqual(reloaded.entries.first?.transcript, "")
+    XCTAssertTrue(
+      reloaded.entries.first?.previewText.localizedCaseInsensitiveContains("audio saved")
+        == true
+    )
+  }
 }

@@ -115,9 +115,17 @@ final class SettingsStore: ObservableObject {
     spaceLocksHandsFree =
       defaults.object(forKey: Keys.spaceLocksHandsFree) as? Bool
       ?? true
-    basePrompt =
+    let storedPrompt =
       defaults.string(forKey: Keys.basePrompt)
       ?? Self.defaultBasePrompt
+    if WritingGuidance.isFactoryDefault(storedPrompt) {
+      basePrompt = Self.defaultBasePrompt
+      if storedPrompt != Self.defaultBasePrompt {
+        defaults.set(Self.defaultBasePrompt, forKey: Keys.basePrompt)
+      }
+    } else {
+      basePrompt = storedPrompt
+    }
     delay =
       TranscriptionDelay(
         rawValue: defaults.string(forKey: Keys.delay) ?? ""
@@ -255,8 +263,7 @@ final class SettingsStore: ObservableObject {
   }
 
   var isUsingDefaultBasePrompt: Bool {
-    basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-      == Self.defaultBasePrompt
+    WritingGuidance.isFactoryDefault(basePrompt)
   }
 
   func resetBasePrompt() {
@@ -293,7 +300,7 @@ final class SettingsStore: ObservableObject {
       return false
     }
 
-    let heardAs = oftenHeardAs.trimmingCharacters(in: .whitespacesAndNewlines)
+    let heardAs = VocabularyAliases.normalized(oftenHeardAs)
     vocabulary.append(VocabularyItem(term: normalized, oftenHeardAs: heardAs))
     vocabulary.sort {
       $0.term.localizedCaseInsensitiveCompare($1.term) == .orderedAscending
@@ -301,18 +308,24 @@ final class SettingsStore: ObservableObject {
     return true
   }
 
-  func updateVocabulary(_ item: VocabularyItem) {
+  func updateVocabulary(_ item: VocabularyItem) -> Bool {
     guard let index = vocabulary.firstIndex(where: { $0.id == item.id }),
       let normalized = VocabularyValidation.normalizedTerm(item.term)
     else {
-      return
+      return false
     }
+    let duplicate = vocabulary.contains {
+      $0.id != item.id
+        && $0.term.localizedCaseInsensitiveCompare(normalized) == .orderedSame
+    }
+    guard !duplicate else { return false }
+
     vocabulary[index].term = normalized
-    vocabulary[index].oftenHeardAs = item.oftenHeardAs
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    vocabulary[index].oftenHeardAs = VocabularyAliases.normalized(item.oftenHeardAs)
     vocabulary.sort {
       $0.term.localizedCaseInsensitiveCompare($1.term) == .orderedAscending
     }
+    return true
   }
 
   func removeVocabulary(id: UUID) {

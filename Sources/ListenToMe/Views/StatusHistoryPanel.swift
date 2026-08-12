@@ -223,9 +223,14 @@ struct StatusHistoryPanel: View {
           .foregroundStyle(AppTheme.faintText)
       }
 
-      Text(entry.transcript)
+      Text(entry.previewText)
         .font(.system(size: 13))
-        .foregroundStyle(AppTheme.primaryText)
+        .foregroundStyle(
+          entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+            ? AppTheme.secondaryText
+            : AppTheme.primaryText
+        )
         .lineLimit(3)
         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -256,6 +261,10 @@ struct StatusHistoryPanel: View {
           )
         }
         .buttonStyle(QuietButtonStyle())
+        .disabled(
+          entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        )
 
         Spacer(minLength: 0)
       }

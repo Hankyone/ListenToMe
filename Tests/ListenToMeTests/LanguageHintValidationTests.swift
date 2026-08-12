@@ -58,4 +58,23 @@ final class UserFacingErrorTests: XCTestCase {
     XCTAssertLessThanOrEqual(message.count, UserFacingError.maxLength)
     XCTAssertTrue(message.hasSuffix("…"))
   }
+
+  func testMapsLiveLengthLimitWithoutDumpingRawAPIText() {
+    let message = UserFacingError.message(
+      from: "input_audio_buffer is too large: audio too long for this session"
+    )
+    XCTAssertTrue(message.localizedCaseInsensitiveContains("history"))
+    XCTAssertTrue(message.localizedCaseInsensitiveContains("reprocess"))
+    XCTAssertFalse(message.localizedCaseInsensitiveContains("input_audio_buffer"))
+  }
+
+  func testMapsPromptTooLongSeparatelyFromAudioLimits() {
+    let message = UserFacingError.message(
+      from:
+        "Invalid 'session.audio.input.transcription.prompt': string too long. Expected a string with maximum length 1024, but got a string with length 1028 instead."
+    )
+    XCTAssertTrue(message.localizedCaseInsensitiveContains("writing guidance"))
+    XCTAssertFalse(message.localizedCaseInsensitiveContains("1028"))
+    XCTAssertFalse(message.localizedCaseInsensitiveContains("session.audio"))
+  }
 }

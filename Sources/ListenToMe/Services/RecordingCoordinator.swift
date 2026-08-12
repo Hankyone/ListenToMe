@@ -45,6 +45,10 @@ final class RecordingCoordinator: ObservableObject {
   private var stopRequestedWhileStarting = false
   /// When true, stop() uploads the CAF instead of waiting on a live websocket.
   private var usesBatchTranscription = false
+  /// Live websocket died mid-take; mic keeps writing the CAF.
+  private var liveStreamDetached = false
+  /// Prevents overlapping fail/cancel/finalize paths from trashing the take.
+  private var isClosingTake = false
 
   init(
     settings: SettingsStore,
@@ -76,6 +80,8 @@ final class RecordingCoordinator: ObservableObject {
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
     isHandsFreeLocked = false
+    isClosingTake = false
+    liveStreamDetached = false
     usesBatchTranscription = !settings.apiProvider.supportsLiveStreaming
     liveDraft.reset()
     elapsed = 0
@@ -92,7 +98,7 @@ final class RecordingCoordinator: ObservableObject {
 
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
-      fail(message)
+      await failAndPreserve(message)
       return
     }
 
@@ -100,13 +106,13 @@ final class RecordingCoordinator: ObservableObject {
     do {
       apiKey = try settings.loadAPIKey()
     } catch {
-      fail(
+      await failAndPreserve(
         "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
       )
       return
     }
     guard !apiKey.isEmpty else {
-      fail(
+      await failAndPreserve(
         "Paste a \(settings.apiProvider.title) API key in Setup before dictating."
       )
       return
@@ -116,14 +122,16 @@ final class RecordingCoordinator: ObservableObject {
     if !permissions.microphoneGranted {
       let granted = await permissions.requestMicrophone()
       guard granted else {
-        fail("Microphone access is off. Allow it in System Settings, then try again.")
+        await failAndPreserve(
+          "Microphone access is off. Allow it in System Settings, then try again."
+        )
         return
       }
     }
 
     if !permissions.accessibilityGranted {
       permissions.openAccessibilitySettings()
-      fail(
+      await failAndPreserve(
         "Accessibility is off, so text can’t be pasted into the focused field. Enable ListenToMe in System Settings → Privacy & Security → Accessibility, quit ListenToMe from the menu bar, reopen it, then try again."
       )
       return
@@ -145,8 +153,7 @@ final class RecordingCoordinator: ObservableObject {
       }
     } catch {
       await cleanUpConnection()
-      discardCurrentRecording()
-      fail(error.localizedDescription)
+      await failAndPreserve(error.localizedDescription)
     }
   }
 
@@ -201,13 +208,7 @@ final class RecordingCoordinator: ObservableObject {
 
   func cancelDictation() {
     guard phase.isBusy else { return }
-    stopRequestedWhileStarting = false
-    didFinalizeCurrentRecording = true
-    isHandsFreeLocked = false
-    teardownSession()
-    liveDraft.reset()
-    phase = .idle
-    resetRecordingReferences()
+    Task { await cancelPreservingAudio() }
   }
 
   func stop() async {
@@ -237,11 +238,7 @@ final class RecordingCoordinator: ObservableObject {
     do {
       try await client?.commit()
     } catch {
-      if partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        abandonQuietly()
-      } else {
-        await finalize(transcript: partialTranscript)
-      }
+      await finishWithBestAvailableTranscript()
       return
     }
 
@@ -254,13 +251,7 @@ final class RecordingCoordinator: ObservableObject {
     finishTimeoutTask = Task { [weak self] in
       try? await Task.sleep(nanoseconds: timeoutNs)
       guard let self, self.phase == .finishing else { return }
-      let fallback = self.partialTranscript
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      if fallback.isEmpty {
-        self.abandonQuietly()
-      } else {
-        await self.finalize(transcript: fallback)
-      }
+      await self.finishWithBestAvailableTranscript()
     }
   }
 
@@ -334,7 +325,7 @@ final class RecordingCoordinator: ObservableObject {
       },
       onError: { [weak self] error in
         DispatchQueue.main.async {
-          self?.fail(error.localizedDescription)
+          Task { await self?.failAndPreserve(error.localizedDescription) }
         }
       }
     )
@@ -376,7 +367,7 @@ final class RecordingCoordinator: ObservableObject {
         return
       } catch {
         await MainActor.run { [weak self] in
-          self?.fail(error.localizedDescription)
+          self?.handleLiveStreamFailure(error.localizedDescription)
         }
       }
     }
@@ -525,7 +516,7 @@ final class RecordingCoordinator: ObservableObject {
       },
       onError: { [weak self] error in
         DispatchQueue.main.async {
-          self?.fail(error.localizedDescription)
+          Task { await self?.failAndPreserve(error.localizedDescription) }
         }
       }
     )
@@ -535,7 +526,7 @@ final class RecordingCoordinator: ObservableObject {
     _ = await audioCapture.stop()
 
     guard let recordingURL else {
-      fail("The recording file was missing.")
+      await persistFailedTake(message: "The recording file was missing.")
       return
     }
 
@@ -543,8 +534,9 @@ final class RecordingCoordinator: ObservableObject {
     do {
       apiKey = try settings.loadAPIKey()
     } catch {
-      fail(
-        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+      await persistFailedTake(
+        message:
+          "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
       )
       return
     }
@@ -562,10 +554,12 @@ final class RecordingCoordinator: ObservableObject {
       )
       await finalize(transcript: text)
     } catch {
-      if Self.isBenignEmptyTake(error.localizedDescription) {
+      if Self.isBenignEmptyTake(error.localizedDescription),
+        !recordingFileHasAudio()
+      {
         abandonQuietly()
       } else {
-        fail(error.localizedDescription)
+        await persistFailedTake(message: error.localizedDescription)
       }
     }
   }
@@ -588,11 +582,15 @@ final class RecordingCoordinator: ObservableObject {
       }
 
     case .error(let message):
-      guard phase.isBusy else { return }
-      if Self.isBenignEmptyTake(message) {
+      guard phase.isBusy, !liveStreamDetached else { return }
+      if phase == .recording {
+        handleLiveStreamFailure(message)
+        return
+      }
+      if Self.isBenignEmptyTake(message), !recordingFileHasAudio() {
         abandonQuietly()
       } else {
-        fail(message)
+        Task { await failAndPreserve(message) }
       }
     }
   }
@@ -632,10 +630,13 @@ final class RecordingCoordinator: ObservableObject {
 
     let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !finalText.isEmpty, let recordingURL else {
-      // Tap with no speech is normal — don't alarm.
       await recycleOrDropClient()
-      discardCurrentRecording()
-      abandonQuietly()
+      if recordingFileHasAudio() {
+        await persistFailedTake(message: "No transcript came back.")
+      } else {
+        discardCurrentRecording()
+        abandonQuietly()
+      }
       return
     }
 
@@ -690,14 +691,195 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
-  private func fail(_ message: String) {
-    guard phase != .failed else { return }
-    errorMessage = UserFacingError.message(from: message)
+  /// Live STT died while the user is still talking. Keep the mic and CAF;
+  /// transcribe the file when they stop.
+  private func handleLiveStreamFailure(_ message: String) {
+    if liveStreamDetached { return }
+    if phase == .recording {
+      detachLiveTranscription()
+      return
+    }
+    Task { await failAndPreserve(message) }
+  }
+
+  private func detachLiveTranscription() {
+    liveStreamDetached = true
+    usesBatchTranscription = true
+    audioContinuation?.finish()
+    audioContinuation = nil
+    audioSendTask?.cancel()
+    audioSendTask = nil
+    let active = client
+    client = nil
+    Task {
+      await active?.disconnect()
+    }
+  }
+
+  private func failAndPreserve(_ message: String) async {
+    guard !didFinalizeCurrentRecording, !isClosingTake else { return }
+    isClosingTake = true
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+    if phase == .recording {
+      phase = .finishing
+    }
+
+    await stopCapturePreservingFile()
+    await recycleOrDropClient()
+
+    if let recovered = await transcribePreservedRecording() {
+      isClosingTake = false
+      await finalize(transcript: recovered)
+      return
+    }
+
+    await persistFailedTake(message: message)
+  }
+
+  private func finishWithBestAvailableTranscript() async {
+    guard !didFinalizeCurrentRecording, !isClosingTake else { return }
+    let live = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !liveStreamDetached, !live.isEmpty {
+      await finalize(transcript: live)
+      return
+    }
+    if let recovered = await transcribePreservedRecording() {
+      await finalize(transcript: recovered)
+      return
+    }
+    if !live.isEmpty {
+      await finalize(transcript: live)
+      return
+    }
+    await failAndPreserve("Transcription did not finish.")
+  }
+
+  private func cancelPreservingAudio() async {
+    guard phase.isBusy, !didFinalizeCurrentRecording, !isClosingTake else { return }
+    isClosingTake = true
+    stopRequestedWhileStarting = false
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+    await stopCapturePreservingFile()
+    await recycleOrDropClient()
+
+    let partial = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !partial.isEmpty {
+      delivery.copy(partial)
+    }
+    if recordingFileHasAudio() {
+      saveHistoryPreservingAudio(
+        transcript: partial,
+        outcome: .audioSaved
+      )
+    } else {
+      discardCurrentRecording()
+    }
+
+    didFinalizeCurrentRecording = true
+    liveDraft.reset()
+    errorMessage = nil
+    isHandsFreeLocked = false
+    phase = .idle
+    teardownSession()
+    resetRecordingReferences()
+    prepareForNextTake()
+  }
+
+  private func persistFailedTake(message: String) async {
+    guard !didFinalizeCurrentRecording else { return }
+    didFinalizeCurrentRecording = true
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+
+    await stopCapturePreservingFile()
+    await recycleOrDropClient()
+
+    let partial = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !partial.isEmpty {
+      delivery.copy(partial)
+    }
+
+    let saved = recordingFileHasAudio()
+    if saved {
+      saveHistoryPreservingAudio(transcript: partial, outcome: .audioSaved)
+      let mapped = UserFacingError.message(from: message)
+      errorMessage =
+        mapped.localizedCaseInsensitiveContains("history")
+        ? mapped
+        : mapped + " Your audio is saved in History."
+    } else {
+      discardCurrentRecording()
+      errorMessage = UserFacingError.message(from: message)
+    }
+
     isHandsFreeLocked = false
     phase = .failed
     teardownSession()
     resetRecordingReferences()
     prepareForNextTake()
+  }
+
+  private func transcribePreservedRecording() async -> String? {
+    guard let recordingURL, recordingFileHasAudio() else { return nil }
+    let apiKey: String
+    do {
+      apiKey = try settings.loadAPIKey()
+    } catch {
+      return nil
+    }
+    guard !apiKey.isEmpty else { return nil }
+
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = targetApplication?.name
+    do {
+      return try await FileTranscriptionService.transcribe(
+        audioURL: recordingURL,
+        provider: settings.apiProvider,
+        apiKey: apiKey,
+        prompt: configuration.prompt,
+        languages: configuration.languages
+      )
+    } catch {
+      return nil
+    }
+  }
+
+  @discardableResult
+  private func saveHistoryPreservingAudio(
+    transcript: String,
+    outcome: DeliveryOutcome
+  ) -> UUID? {
+    guard let recordingURL, recordingFileHasAudio() else { return nil }
+    let duration = max(0, Date().timeIntervalSince(startedAt ?? Date()))
+    let entry = HistoryEntry(
+      id: UUID(),
+      createdAt: Date(),
+      transcript: transcript,
+      duration: duration,
+      audioFileName: recordingURL.lastPathComponent,
+      targetApplication: targetApplication,
+      deliveryOutcome: outcome
+    )
+    history.add(entry)
+    onHistoryEntryCreated?(entry.id)
+    return entry.id
+  }
+
+  private func stopCapturePreservingFile() async {
+    if audioCapture.isRecording {
+      _ = await audioCapture.stop()
+    }
+    audioContinuation?.finish()
+    audioContinuation = nil
+    audioSendTask?.cancel()
+    audioSendTask = nil
+  }
+
+  private func recordingFileHasAudio() -> Bool {
+    guard let recordingURL else { return false }
+    return HistoryStore.hasPreservableAudio(at: recordingURL)
   }
 
   /// End a take with nothing to deliver — no banner, no "Dictation stopped".
@@ -707,6 +889,7 @@ final class RecordingCoordinator: ObservableObject {
     errorMessage = nil
     isHandsFreeLocked = false
     phase = .idle
+    discardCurrentRecording()
     teardownSession()
     resetRecordingReferences()
     prepareForNextTake()
@@ -723,7 +906,6 @@ final class RecordingCoordinator: ObservableObject {
     audioContinuation = nil
     audioSendTask?.cancel()
     audioSendTask = nil
-    discardCurrentRecording()
 
     let client = self.client
     self.client = nil
@@ -794,5 +976,7 @@ final class RecordingCoordinator: ObservableObject {
     startedAt = nil
     targetApplication = nil
     usesBatchTranscription = false
+    liveStreamDetached = false
+    isClosingTake = false
   }
 }

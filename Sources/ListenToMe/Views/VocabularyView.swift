@@ -6,7 +6,10 @@ struct VocabularyView: View {
   @State private var term = ""
   @State private var oftenHeardAs = ""
   @State private var validationMessage = ""
-  @State private var editingItem: VocabularyItem?
+  @State private var editingID: UUID?
+  @State private var editTerm = ""
+  @State private var editHeardAs = ""
+  @State private var editValidationMessage = ""
   @State private var guidanceSavedFlash = false
   @FocusState private var guidanceFocused: Bool
   @State private var guidanceSaveTask: Task<Void, Never>?
@@ -34,11 +37,6 @@ struct VocabularyView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(AppTheme.background)
-    .sheet(item: $editingItem) { item in
-      VocabularyEditorSheet(item: item) { updated in
-        settings.updateVocabulary(updated)
-      }
-    }
   }
 
   private var guidanceSection: some View {
@@ -166,7 +164,7 @@ struct VocabularyView: View {
     WordsSection(title: "Custom words") {
       VStack(alignment: .leading, spacing: 12) {
         Text(
-          "Names and product terms are sent as hints with every dictation. They are not hard replacements."
+          "The first field is the spelling you want in the transcript. Add other spellings the model might hear, separated by commas — for example Anouar with Anwar, Anuar. These are hints, not hard replacements."
         )
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
@@ -174,12 +172,12 @@ struct VocabularyView: View {
         HStack(alignment: .top, spacing: 12) {
           VStack(alignment: .leading, spacing: 6) {
             ThemedTextField(
-              placeholder: "Correct spelling, such as Claude",
+              placeholder: "Correct spelling, such as Anouar",
               text: $term,
               onSubmit: addWord
             )
             ThemedTextField(
-              placeholder: "Often heard as, such as cloud",
+              placeholder: "Other spellings, such as Anwar, Anuar",
               text: $oftenHeardAs,
               onSubmit: addWord
             )
@@ -208,40 +206,83 @@ struct VocabularyView: View {
         } else {
           VStack(spacing: 8) {
             ForEach(settings.vocabulary) { item in
-              HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(item.term)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                  if !item.oftenHeardAs.isEmpty {
-                    Text("May sound like “\(item.oftenHeardAs)”")
-                      .font(.system(size: 12))
-                      .foregroundStyle(AppTheme.secondaryText)
-                  }
-                }
-                Spacer()
-                Button("Edit") {
-                  editingItem = item
-                }
-                .buttonStyle(QuietButtonStyle())
-                Button {
-                  settings.removeVocabulary(id: item.id)
-                } label: {
-                  Image(systemName: "trash")
-                }
-                .buttonStyle(QuietButtonStyle(isDestructive: true))
-                .accessibilityLabel("Delete \(item.term)")
-              }
-              .padding(12)
-              .background(
-                ChamferedPlate(cut: 7)
-                  .fill(AppTheme.background)
-              )
+              vocabularyRow(item)
             }
           }
         }
       }
     }
+  }
+
+  private func vocabularyRow(_ item: VocabularyItem) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if editingID == item.id {
+        VStack(alignment: .leading, spacing: 6) {
+          ThemedTextField(
+            placeholder: "Correct spelling, such as Anouar",
+            text: $editTerm,
+            onSubmit: saveEdit
+          )
+          ThemedTextField(
+            placeholder: "Other spellings, such as Anwar, Anuar",
+            text: $editHeardAs,
+            onSubmit: saveEdit
+          )
+        }
+        if !editValidationMessage.isEmpty {
+          Text(editValidationMessage)
+            .font(.system(size: 12))
+            .foregroundStyle(AppTheme.accent)
+        }
+        HStack(spacing: 12) {
+          Spacer()
+          Button("Cancel") {
+            cancelEdit()
+          }
+          .buttonStyle(QuietButtonStyle())
+          Button("Save") {
+            saveEdit()
+          }
+          .buttonStyle(QuietButtonStyle())
+          .disabled(
+            VocabularyValidation.normalizedTerm(editTerm) == nil
+          )
+        }
+      } else {
+        HStack(spacing: 16) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(item.term)
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(AppTheme.primaryText)
+            if !item.oftenHeardAs.isEmpty {
+              Text("Also heard as \(item.oftenHeardAs)")
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.secondaryText)
+            }
+          }
+          Spacer()
+          Button("Edit") {
+            beginEdit(item)
+          }
+          .buttonStyle(QuietButtonStyle())
+          Button {
+            if editingID == item.id {
+              cancelEdit()
+            }
+            settings.removeVocabulary(id: item.id)
+          } label: {
+            Image(systemName: "trash")
+          }
+          .buttonStyle(QuietButtonStyle(isDestructive: true))
+          .accessibilityLabel("Delete \(item.term)")
+        }
+      }
+    }
+    .padding(12)
+    .background(
+      ChamferedPlate(cut: 7)
+        .fill(AppTheme.background)
+    )
   }
 
   private func addWord() {
@@ -254,6 +295,37 @@ struct VocabularyView: View {
       validationMessage = ""
     } else {
       validationMessage =
+        "Use one unique term without angle brackets or line breaks."
+    }
+  }
+
+  private func beginEdit(_ item: VocabularyItem) {
+    editingID = item.id
+    editTerm = item.term
+    editHeardAs = item.oftenHeardAs
+    editValidationMessage = ""
+  }
+
+  private func cancelEdit() {
+    editingID = nil
+    editTerm = ""
+    editHeardAs = ""
+    editValidationMessage = ""
+  }
+
+  private func saveEdit() {
+    guard let id = editingID,
+      let existing = settings.vocabulary.first(where: { $0.id == id })
+    else {
+      return
+    }
+    var updated = existing
+    updated.term = editTerm
+    updated.oftenHeardAs = editHeardAs
+    if settings.updateVocabulary(updated) {
+      cancelEdit()
+    } else {
+      editValidationMessage =
         "Use one unique term without angle brackets or line breaks."
     }
   }
@@ -283,45 +355,3 @@ private struct WordsSection<Content: View>: View {
   }
 }
 
-private struct VocabularyEditorSheet: View {
-  @Environment(\.dismiss) private var dismiss
-  @State private var term: String
-  @State private var oftenHeardAs: String
-  let item: VocabularyItem
-  let onSave: (VocabularyItem) -> Void
-
-  init(item: VocabularyItem, onSave: @escaping (VocabularyItem) -> Void) {
-    self.item = item
-    self.onSave = onSave
-    _term = State(initialValue: item.term)
-    _oftenHeardAs = State(initialValue: item.oftenHeardAs)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      Text("Edit custom word")
-        .font(.system(size: 20, weight: .semibold))
-      Form {
-        TextField("Correct spelling", text: $term)
-        TextField("Often heard as", text: $oftenHeardAs)
-      }
-      HStack {
-        Spacer()
-        Button("Cancel") {
-          dismiss()
-        }
-        Button("Save") {
-          var updated = item
-          updated.term = term
-          updated.oftenHeardAs = oftenHeardAs
-          onSave(updated)
-          dismiss()
-        }
-        .keyboardShortcut(.defaultAction)
-        .disabled(VocabularyValidation.normalizedTerm(term) == nil)
-      }
-    }
-    .padding(24)
-    .frame(width: 420)
-  }
-}

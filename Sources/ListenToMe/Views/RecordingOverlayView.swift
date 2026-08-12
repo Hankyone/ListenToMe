@@ -94,7 +94,7 @@ struct RecordingOverlayView: View {
       }
     case .finishing: "Finishing"
     case .delivered(let outcome): outcome.title
-    case .failed: "Stopped"
+    case .failed: "Audio saved"
     case .idle: "Ready"
     }
   }

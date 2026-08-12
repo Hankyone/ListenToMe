@@ -47,6 +47,16 @@ enum UserFacingError {
       return "The connection timed out before transcription finished."
     }
 
+    if looksLikePromptTooLong(trimmed) {
+      return
+        "Writing guidance was too long for live transcription. It’s trimmed automatically now — try again."
+    }
+
+    if looksLikeLengthLimit(trimmed) {
+      return
+        "Live transcription hit a length limit. Your audio is saved in History — play it back or hit Reprocess."
+    }
+
     if trimmed.localizedCaseInsensitiveContains("internet")
       || trimmed.localizedCaseInsensitiveContains("network")
       || trimmed.localizedCaseInsensitiveContains("offline")
@@ -74,6 +84,31 @@ enum UserFacingError {
         options: .regularExpression
       ) != nil
     return mentionsLanguage && (looksInvalid || looksRegional)
+  }
+
+  private static func looksLikePromptTooLong(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    return lower.contains("prompt")
+      && (lower.contains("too long")
+        || lower.contains("maximum length")
+        || lower.contains("max length"))
+  }
+
+  private static func looksLikeLengthLimit(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    if lower.contains("too long")
+      || lower.contains("too large")
+      || lower.contains("max duration")
+      || lower.contains("maximum duration")
+      || lower.contains("audio_too_long")
+    {
+      return true
+    }
+    return lower.contains("buffer")
+      && (lower.contains("limit")
+        || lower.contains("exceed")
+        || lower.contains("full")
+        || lower.contains("large"))
   }
 
   private static func truncate(_ message: String) -> String {

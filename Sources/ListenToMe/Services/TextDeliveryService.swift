@@ -69,17 +69,31 @@ final class TextDeliveryService {
     }
 
     // VoiceInk pre-paste settle — Electron needs a beat after activate().
-    let settleNs: UInt64 = isChromiumHost(target) ? 180_000_000 : 100_000_000
+    let settleNs: UInt64 =
+      isChromiumHost(target) || isTerminalHost(target) ? 180_000_000 : 100_000_000
     try? await Task.sleep(nanoseconds: settleNs)
 
     // Cmd+V is the real delivery path (VoiceInk CursorPaster). Always attempt
     // it — never trust AX selectedText success on Electron first.
-    var pasted = await postPasteShortcut()
-    if !pasted {
+    // GPU terminals (Ghostty, kitty, …) often ignore HID Cmd+V; System Events
+    // keystrokes land in the shell when HID does not.
+    var pasted = false
+    if isTerminalHost(target) {
       pasted = pasteViaAppleScriptKeyCode()
-    }
-    if !pasted {
-      pasted = pasteViaEditMenu()
+      if !pasted {
+        pasted = pasteViaEditMenu()
+      }
+      if !pasted {
+        pasted = await postPasteShortcut()
+      }
+    } else {
+      pasted = await postPasteShortcut()
+      if !pasted {
+        pasted = pasteViaAppleScriptKeyCode()
+      }
+      if !pasted {
+        pasted = pasteViaEditMenu()
+      }
     }
 
     // Native AX insert only as a last resort, and only when we can verify the
@@ -107,6 +121,15 @@ final class TextDeliveryService {
       NSApp.yieldActivation(to: app)
     }
     return app.activate()
+  }
+
+  private func isTerminalHost(_ target: TargetApplication) -> Bool {
+    let id = (target.bundleIdentifier ?? "").lowercased()
+    let name = target.name.lowercased()
+    let needles = [
+      "ghostty", "iterm", "terminal", "kitty", "alacritty", "warp", "wezterm",
+    ]
+    return needles.contains { id.contains($0) || name.contains($0) }
   }
 
   private func isChromiumHost(_ target: TargetApplication) -> Bool {

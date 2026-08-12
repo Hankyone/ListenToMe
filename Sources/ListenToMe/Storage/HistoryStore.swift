@@ -106,6 +106,17 @@ final class HistoryStore: ObservableObject {
     recordingsURL.appendingPathComponent(entry.audioFileName)
   }
 
+  /// CAF header plus a trivial amount of PCM — anything smaller is an empty take.
+  static let minimumPreservableAudioBytes: Int64 = 4_096
+
+  static func hasPreservableAudio(at url: URL) -> Bool {
+    guard FileManager.default.fileExists(atPath: url.path) else { return false }
+    let size =
+      (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]
+        as? NSNumber)?.int64Value ?? 0
+    return size > minimumPreservableAudioBytes
+  }
+
   private func load() {
     guard FileManager.default.fileExists(atPath: indexURL.path),
       let data = try? Data(contentsOf: indexURL),

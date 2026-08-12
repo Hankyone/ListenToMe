@@ -53,6 +53,8 @@ enum DeliveryOutcome: String, Codable, Sendable {
   case copiedNoAccessibility
   case copiedNoTarget
   case copiedPasteFailed
+  /// Audio is on disk; transcription and/or paste did not complete.
+  case audioSaved
 
   var title: String {
     switch self {
@@ -61,12 +63,14 @@ enum DeliveryOutcome: String, Codable, Sendable {
     case .copiedNoAccessibility: "Copied because paste access is off"
     case .copiedNoTarget: "Copied"
     case .copiedPasteFailed: "Copied after paste failed"
+    case .audioSaved: "Audio saved"
     }
   }
 
   var symbolName: String {
     switch self {
     case .pasted: "arrow.down.to.line"
+    case .audioSaved: "waveform"
     default: "doc.on.doc"
     }
   }
@@ -84,17 +88,45 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
   var shortTargetName: String {
     targetApplication?.name ?? "Clipboard"
   }
+
+  /// List/preview copy when the model never returned text.
+  var previewText: String {
+    let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty { return trimmed }
+    return "Audio saved. Play it back or reprocess."
+  }
 }
 
 struct VocabularyItem: Codable, Identifiable, Equatable, Sendable {
   let id: UUID
   var term: String
+  /// Comma-separated other spellings the model might hear (Anwar, Anuar).
   var oftenHeardAs: String
 
   init(id: UUID = UUID(), term: String, oftenHeardAs: String = "") {
     self.id = id
     self.term = term
     self.oftenHeardAs = oftenHeardAs
+  }
+
+  var heardAsAliases: [String] {
+    let term = self.term.trimmingCharacters(in: .whitespacesAndNewlines)
+    return VocabularyAliases.parse(oftenHeardAs).filter {
+      $0.localizedCaseInsensitiveCompare(term) != .orderedSame
+    }
+  }
+}
+
+enum VocabularyAliases {
+  static func parse(_ raw: String) -> [String] {
+    raw
+      .split(whereSeparator: { $0 == "," || $0 == ";" })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  static func normalized(_ raw: String) -> String {
+    parse(raw).joined(separator: ", ")
   }
 }
 
@@ -221,12 +253,40 @@ enum APIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
 enum WritingGuidance {
   static let defaultBasePrompt = """
-    Lightly polish spoken dictation into clean written text. Keep the speaker's meaning and wording; do not invent content. Add natural punctuation and capitalization — these are not spoken aloud. Remove filler such as um, uh, er, and filler uses of like and you know. Prefer exact spellings from the custom-word list and surrounding context for names and technical terms. When the text continues typing in place, end with one trailing space.
+    Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, you know). Prefer listed spellings. If typing in place, end with one space.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines)
+
+  /// Spoken "scratch that" / "I mean" so the model rewrites instead of
+  /// transcribing the cue words. Always appended; not user-editable.
+  static let correctionPrompt = """
+    If they say correction, scratch that, or I mean, replace the last phrase with the restatement. Drop the cue and the discarded words.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+  /// Older factory text, so Reset stays disabled and we migrate to the compact default.
+  static let previousDefaultBasePrompts: [String] = [
+    """
+    Lightly polish spoken dictation into clean written text. Keep the speaker's meaning and wording; do not invent content. Add natural punctuation and capitalization — these are not spoken aloud. Remove filler such as um, uh, er, and filler uses of like and you know. Prefer exact spellings from the custom-word list and surrounding context for names and technical terms. When the text continues typing in place, end with one trailing space.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+    """
+    Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, like, you know). Prefer listed spellings. If typing in place, end with one space.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+  ]
+
+  static func isFactoryDefault(_ prompt: String) -> Bool {
+    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed == defaultBasePrompt
+      || previousDefaultBasePrompts.contains(trimmed)
+  }
 }
 
 struct TranscriptionConfiguration: Equatable, Sendable {
+  /// OpenAI realtime `session.audio.input.transcription.prompt` max length.
+  static let realtimePromptLimit = 1024
+
   var basePrompt: String
   var vocabulary: [VocabularyItem]
   var languages: [String]
@@ -239,45 +299,96 @@ struct TranscriptionConfiguration: Equatable, Sendable {
   }
 
   var prompt: String {
-    var parts: [String] = []
-
     let cleanBase = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !cleanBase.isEmpty {
-      parts.append(cleanBase)
-    }
 
+    let appLine: String?
     if let appName = targetAppName?
       .trimmingCharacters(in: .whitespacesAndNewlines),
       !appName.isEmpty
     {
-      parts.append("The speaker is dictating into \(appName).")
+      appLine = "Dictating into \(appName)."
+    } else {
+      appLine = nil
     }
 
     let wordGuidance = vocabulary.map { item in
       let term = item.term.trimmingCharacters(in: .whitespacesAndNewlines)
-      let heardAs = item.oftenHeardAs.trimmingCharacters(in: .whitespacesAndNewlines)
-      if heardAs.isEmpty {
+      let aliases = item.heardAsAliases
+      if aliases.isEmpty {
         return term
       }
-      return "\(term) (may sound like \(heardAs))"
+      return "\(term) (\(aliases.joined(separator: ", ")))"
     }
     .filter { !$0.isEmpty }
-    .joined(separator: ", ")
+    .joined(separator: "; ")
 
-    if !wordGuidance.isEmpty {
-      parts.append(
-        "When the audio and context indicate these names or terms, use these exact spellings: \(wordGuidance). These are hints only. Never insert a term that was not spoken."
-      )
+    let wordsLine: String?
+    if wordGuidance.isEmpty {
+      wordsLine = nil
+    } else {
+      wordsLine =
+        "Spellings (hints; never insert unspoken): \(wordGuidance)."
     }
 
-    parts.append(
-      """
-      If the speaker says "correction", "scratch that", or "I mean" and then restates something, treat that as an edit: replace the immediately preceding wrong phrase with the restatement. Do not keep the cue words or the discarded phrase in the transcript. Continue with whatever they say next. Keep the final text paste-ready.
-      """
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return Self.clampedPrompt(
+      base: cleanBase,
+      appLine: appLine,
+      wordsLine: wordsLine,
+      correction: WritingGuidance.correctionPrompt,
+      limit: Self.realtimePromptLimit
     )
+  }
 
-    return parts.joined(separator: "\n\n")
+  /// Shrinks writing guidance, then custom-word hints, so a long target-app
+  /// name cannot blow the realtime 1024-character prompt cap.
+  static func clampedPrompt(
+    base: String,
+    appLine: String?,
+    wordsLine: String?,
+    correction: String,
+    limit: Int
+  ) -> String {
+    func assemble(base: String, words: String?) -> String {
+      [base, appLine ?? "", words ?? "", correction]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    }
+
+    var base = base
+    var words = wordsLine
+    var result = assemble(base: base, words: words)
+    if result.utf8.count <= limit { return result }
+
+    let withoutBase = assemble(base: "", words: words)
+    if withoutBase.utf8.count <= limit {
+      let budget = max(0, limit - withoutBase.utf8.count - (withoutBase.isEmpty ? 0 : 1))
+      base = utf8Prefix(base, budget)
+      return assemble(base: base, words: words)
+    }
+
+    base = ""
+    result = assemble(base: base, words: words)
+    if result.utf8.count <= limit { return result }
+
+    let withoutWords = assemble(base: "", words: nil)
+    if withoutWords.utf8.count <= limit {
+      let budget = max(0, limit - withoutWords.utf8.count - (withoutWords.isEmpty ? 0 : 1))
+      words = utf8Prefix(words ?? "", budget)
+      return assemble(base: "", words: words)
+    }
+
+    return utf8Prefix(withoutWords, limit)
+  }
+
+  private static func utf8Prefix(_ string: String, _ maxBytes: Int) -> String {
+    guard maxBytes > 0 else { return "" }
+    if string.utf8.count <= maxBytes { return string }
+    var truncated = string
+    while truncated.utf8.count > maxBytes, !truncated.isEmpty {
+      truncated.removeLast()
+    }
+    return truncated.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 

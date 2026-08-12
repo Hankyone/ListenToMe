@@ -86,6 +86,11 @@ private struct HistoryListView: View {
                     pasteboard.clearContents()
                     pasteboard.setString(entry.transcript, forType: .string)
                   }
+                  .disabled(
+                    entry.transcript.trimmingCharacters(
+                      in: .whitespacesAndNewlines
+                    ).isEmpty
+                  )
                   Button("Move Recording to Trash", role: .destructive) {
                     history.remove(id: entry.id)
                     if selectedID == entry.id {
@@ -124,9 +129,14 @@ private struct HistoryRow: View {
           .foregroundStyle(AppTheme.faintText)
       }
 
-      Text(entry.transcript)
+      Text(entry.previewText)
         .font(.system(size: 13))
-        .foregroundStyle(AppTheme.primaryText)
+        .foregroundStyle(
+          entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+            ? AppTheme.secondaryText
+            : AppTheme.primaryText
+        )
         .lineLimit(3)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -287,7 +297,11 @@ private struct HistoryDetailView: View {
         )
       }
       .buttonStyle(QuietButtonStyle())
-      .disabled(isReprocessing)
+      .disabled(
+        isReprocessing
+          || entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+      )
 
       Button {
         Task {
