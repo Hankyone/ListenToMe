@@ -72,4 +72,25 @@ final class SpokenCorrectionTests: XCTestCase {
       "Send it to Jane"
     )
   }
+
+  func testCorrectionCommaThenReplacement() {
+    let spoken =
+      "I so was planning a trip to Toronto, correction, Montreal, and then see where I was gonna go next."
+    XCTAssertEqual(
+      SpokenCorrection.apply(spoken),
+      "I so was planning a trip to Montreal, and then see where I was gonna go next."
+    )
+  }
+
+  func testIMeanWithCommaAfterCue() {
+    XCTAssertEqual(
+      SpokenCorrection.apply("Meet me at 5, I mean, 6."),
+      "Meet me at 6."
+    )
+  }
+
+  func testTrailingCommaAfterCorrectionIsStillIncomplete() {
+    let partial = "a trip to Montreal, correction,"
+    XCTAssertEqual(SpokenCorrection.apply(partial), partial)
+  }
 }

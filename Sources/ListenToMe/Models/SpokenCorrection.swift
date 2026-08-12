@@ -112,9 +112,15 @@ enum SpokenCorrection {
   }
 
   private static func splitRestatement(_ after: String) -> (String, String) {
-    let trimmed = after.trimmingCharacters(in: .whitespacesAndNewlines)
+    // "Toronto, correction, Montreal" — the comma after the cue is a pause,
+    // not "no restatement yet".
+    var trimmed = after.trimmingCharacters(in: .whitespacesAndNewlines)
+    while let first = trimmed.first, ",;:".contains(first) {
+      trimmed = String(trimmed.dropFirst())
+        .trimmingCharacters(in: .whitespaces)
+    }
     guard !trimmed.isEmpty else { return ("", "") }
-    if let first = trimmed.first, ",.;:!?".contains(first) {
+    if let first = trimmed.first, ".!?".contains(first) {
       return ("", trimmed)
     }
 
