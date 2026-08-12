@@ -295,7 +295,10 @@ final class RecordingCoordinator: ObservableObject {
         prompt: configuration.prompt,
         languages: configuration.languages
       )
-      history.updateTranscript(id: id, transcript: SpokenCorrection.apply(text))
+      history.updateTranscript(
+        id: id,
+        transcript: await polishedTranscript(text, apiKey: apiKey)
+      )
     } catch {
       errorMessage = UserFacingError.message(from: error.localizedDescription)
     }
@@ -575,10 +578,9 @@ final class RecordingCoordinator: ObservableObject {
 
     case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
-      let polished = SpokenCorrection.apply(transcript)
-      liveDraft.applyCompleted(polished)
+      liveDraft.applyCompleted(transcript)
       Task {
-        await finalize(transcript: polished)
+        await finalize(transcript: transcript)
       }
 
     case .error(let message):
@@ -605,16 +607,40 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func applyLiveSnapshot(_ snapshot: LiveTranscriptSnapshot) {
-    let polished = SpokenCorrection.apply(snapshot.display)
-    if polished != snapshot.display {
-      committedTranscript = polished
-      tentativeTranscript = ""
-      partialTranscript = polished
-      return
-    }
     committedTranscript = snapshot.committed
     tentativeTranscript = snapshot.tentative
     partialTranscript = snapshot.display
+  }
+
+  /// Live STT is literal. A cheap chat pass applies spoken corrections as
+  /// language, not comma-matching. Falls back to the local rewriter if the
+  /// request fails or times out.
+  private func polishedTranscript(
+    _ transcript: String,
+    apiKey: String? = nil
+  ) async -> String {
+    let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return trimmed }
+
+    let key: String
+    if let apiKey {
+      key = apiKey
+    } else {
+      key = (try? settings.loadAPIKey()) ?? ""
+    }
+
+    if !key.isEmpty,
+      let polished = await TranscriptPolishService.polish(
+        transcript: trimmed,
+        provider: settings.apiProvider,
+        apiKey: key,
+        guidance: settings.basePrompt,
+        vocabulary: settings.vocabulary
+      )
+    {
+      return polished
+    }
+    return SpokenCorrection.apply(trimmed)
   }
 
   private func finalize(transcript: String) async {
@@ -635,7 +661,7 @@ final class RecordingCoordinator: ObservableObject {
       audioSendTask = nil
     }
 
-    let finalText = SpokenCorrection.apply(transcript)
+    let finalText = await polishedTranscript(transcript)
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !finalText.isEmpty, let recordingURL else {
       await recycleOrDropClient()
