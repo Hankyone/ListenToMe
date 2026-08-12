@@ -1,6 +1,5 @@
 import AppKit
 import PermissionFlow
-import Sparkle
 import SwiftUI
 
 struct SettingsContentView: View {
@@ -277,7 +276,7 @@ struct SettingsContentView: View {
           .fixedSize(horizontal: false, vertical: true)
 
         Button("Check for Updates…") {
-          updates.updaterController.checkForUpdates(nil)
+          updates.checkForUpdates(nil)
         }
         .buttonStyle(RecordActionButtonStyle())
       }

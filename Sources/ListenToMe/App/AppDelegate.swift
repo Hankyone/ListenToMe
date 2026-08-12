@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import Sparkle
 import SwiftUI
 
 @MainActor
@@ -413,10 +412,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let checkForUpdates = applicationMenu.addItem(
       withTitle: "Check for Updates…",
-      action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+      action: #selector(UpdateService.checkForUpdates(_:)),
       keyEquivalent: ""
     )
-    checkForUpdates.target = model.updates.updaterController
+    checkForUpdates.target = model.updates
     applicationMenu.addItem(.separator())
 
     let setup = applicationMenu.addItem(
@@ -533,10 +532,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let checkForUpdates = addMenuItem(
       "Check for Updates…",
       symbolName: "arrow.triangle.2.circlepath",
-      action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+      action: #selector(UpdateService.checkForUpdates(_:)),
       to: menu
     )
-    checkForUpdates.target = model.updates.updaterController
+    checkForUpdates.target = model.updates
     addMenuItem(
       "Quit ListenToMe",
       symbolName: "power",
