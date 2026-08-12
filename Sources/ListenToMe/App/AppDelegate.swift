@@ -231,12 +231,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       Task {
         await model.recording.requestStop()
       }
-    case .finishNow:
-      pressStartedRecording = false
-      hotkey.setSpaceLockArmed(false)
-      Task {
-        await model.recording.finishNow()
-      }
     }
   }
 
@@ -623,14 +617,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusItem(for: model.recording.phase)
       }
       .store(in: &subscriptions)
-
-    model.recording.$errorMessage
-      .compactMap { $0 }
-      .removeDuplicates()
-      .sink { [weak self] message in
-        self?.presentErrorIfNeeded(message)
-      }
-      .store(in: &subscriptions)
   }
 
   private func showMainWindow() {
@@ -719,18 +705,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if changed {
       window.setFrame(frame, display: true)
     }
-  }
-
-  private func presentErrorIfNeeded(_ message: String) {
-    // Non-activating notice under the menu bar — never activate / makeKey.
-    updateStatusItem(for: model.recording.phase)
-    statusItem?.button?.toolTip = "ListenToMe · \(message)"
-    guard mainWindowController?.window?.isVisible != true else { return }
-    guard let button = statusItem?.button else { return }
-    historyPanelController?.show(
-      relativeTo: button,
-      style: .notice(seconds: 4)
-    )
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {

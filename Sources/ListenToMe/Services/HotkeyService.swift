@@ -243,9 +243,12 @@ final class HotkeyService {
     case .primary:
       if kind == UInt32(kEventHotKeyPressed) {
         if comboIsDown {
-          // Missed key-up (common after Space-lock swallows a key, or after
-          // Setup capture unregisters mid-hold). Always deliver the press so
-          // idle can start and a live take can finish.
+          // Key-repeat fires another "pressed" after ~0.5s while the key is
+          // still down — that must not stop a live take. Only treat it as a
+          // new press when the physical key is already up (missed key-up).
+          if isPrimaryKeyHeld() {
+            return
+          }
           onPress?()
           return
         }
@@ -259,6 +262,14 @@ final class HotkeyService {
     case nil:
       break
     }
+  }
+
+  private func isPrimaryKeyHeld() -> Bool {
+    guard let spec else { return false }
+    return CGEventSource.keyState(
+      .hidSystemState,
+      key: CGKeyCode(spec.keyCode)
+    )
   }
 
   private func installCarbonHandlerIfNeeded() -> Bool {

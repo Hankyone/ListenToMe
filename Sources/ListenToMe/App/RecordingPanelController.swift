@@ -9,6 +9,7 @@ private final class RecordingPanel: NSPanel {
 @MainActor
 final class RecordingPanelController {
   private let panel: RecordingPanel
+  private var hideTask: Task<Void, Never>?
 
   init(coordinator: RecordingCoordinator, settings: SettingsStore) {
     let size = RecordingOverlayView.panelSize
@@ -45,6 +46,8 @@ final class RecordingPanelController {
   }
 
   func update(for phase: RecordingPhase, enabled: Bool) {
+    hideTask?.cancel()
+    hideTask = nil
     guard enabled else {
       panel.orderOut(nil)
       return
@@ -52,8 +55,14 @@ final class RecordingPanelController {
     switch phase {
     case .connecting, .recording:
       show()
-    case .finishing, .delivered, .idle, .failed:
-      // Disappear as soon as the take ends — don't linger through paste.
+    case .failed:
+      show()
+      hideTask = Task { [weak self] in
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        guard !Task.isCancelled else { return }
+        self?.panel.orderOut(nil)
+      }
+    case .finishing, .delivered, .idle:
       panel.orderOut(nil)
     }
   }

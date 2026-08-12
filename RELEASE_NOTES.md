@@ -1,3 +1,4 @@
-## ListenToMe 0.3.42
+## ListenToMe 0.3.43
 
-- Dictation shortcut stays usable after a missed key-up, a stuck Setup capture, or a burst of extra presses. Idle always starts, a live take always stops, and a hung finish can be flushed with another press
+- Holding the shortcut past the tap threshold no longer bricks dictation: key-repeat is ignored while the key is down, and a release-to-stop cannot race an in-flight start
+- Errors show on the bottom listening plate. Nothing pops under the menu bar icon

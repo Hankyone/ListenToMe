@@ -94,7 +94,7 @@ struct RecordingOverlayView: View {
       }
     case .finishing: "Finishing"
     case .delivered(let outcome): outcome.title
-    case .failed: "Audio saved"
+    case .failed: coordinator.errorMessage ?? "Audio saved"
     case .idle: "Ready"
     }
   }
@@ -106,7 +106,10 @@ struct RecordingOverlayView: View {
     let combined = (committed + tentative)
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
-    if combined.isEmpty {
+    if let message = coordinator.errorMessage, coordinator.phase == .failed {
+      Text(message)
+        .foregroundStyle(AppTheme.secondaryText)
+    } else if combined.isEmpty {
       Text(placeholderTranscript)
         .foregroundStyle(AppTheme.secondaryText)
     } else {

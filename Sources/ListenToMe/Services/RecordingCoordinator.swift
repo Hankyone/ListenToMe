@@ -69,14 +69,15 @@ final class RecordingCoordinator: ObservableObject {
       await start()
     case .stop:
       await requestStop()
-    case .finishNow:
-      await finishNow()
     case .continueTake:
       break
     }
   }
 
   func start() async {
+    if phase == .finishing {
+      await recoverToIdle()
+    }
     guard !phase.isBusy else { return }
 
     takeID += 1
@@ -214,7 +215,9 @@ final class RecordingCoordinator: ObservableObject {
   func requestStop() async {
     takeID += 1
     if phase == .recording {
-      if audioContinuation == nil, audioSendTask == nil {
+      // Live path isn't up yet — let `start()` abort instead of racing
+      // `stop()` against `startLiveCapture()`.
+      if audioSendTask == nil {
         stopRequestedWhileStarting = true
         return
       }
@@ -222,13 +225,6 @@ final class RecordingCoordinator: ObservableObject {
     } else if phase == .connecting {
       stopRequestedWhileStarting = true
     }
-  }
-
-  /// Flush a hung finalize so the next press can start a new take.
-  func finishNow() async {
-    takeID += 1
-    guard phase == .finishing else { return }
-    await finishWithBestAvailableTranscript()
   }
 
   func setHandsFreeLocked(_ locked: Bool) {
@@ -894,6 +890,32 @@ final class RecordingCoordinator: ObservableObject {
   private func recordingFileHasAudio() -> Bool {
     guard let recordingURL else { return false }
     return HistoryStore.hasPreservableAudio(at: recordingURL)
+  }
+
+  /// Drop a hung `.finishing` take so the next `start()` can run.
+  private func recoverToIdle() async {
+    takeID += 1
+    stopRequestedWhileStarting = false
+    isClosingTake = false
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+    elapsedTask?.cancel()
+    elapsedTask = nil
+
+    await stopCapturePreservingFile()
+    await recycleOrDropClient()
+
+    if !didFinalizeCurrentRecording {
+      let live = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !live.isEmpty {
+        await finalize(transcript: live)
+        return
+      }
+    }
+
+    if phase.isBusy {
+      abandonQuietly()
+    }
   }
 
   /// `start()` lost the race to a later stop/press. Drop the half-open take

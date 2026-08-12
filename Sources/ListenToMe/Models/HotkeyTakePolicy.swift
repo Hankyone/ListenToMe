@@ -6,7 +6,6 @@ enum HotkeyTakeAction: Equatable {
   case start
   case stop
   case continueTake
-  case finishNow
 }
 
 enum HotkeyTakePolicy {
@@ -29,7 +28,7 @@ enum HotkeyTakePolicy {
     case .recording, .connecting:
       return .stop
     case .finishing:
-      return .finishNow
+      return .start
     }
   }
 }

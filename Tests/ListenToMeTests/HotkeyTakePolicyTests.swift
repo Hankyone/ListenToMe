@@ -41,14 +41,14 @@ final class HotkeyTakePolicyTests: XCTestCase {
     )
   }
 
-  func testFinishingPressFlushesInsteadOfNoOp() {
+  func testFinishingPressStartsANewTake() {
     XCTAssertEqual(
       HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: false),
-      .finishNow
+      .start
     )
     XCTAssertEqual(
       HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: true),
-      .finishNow
+      .start
     )
   }
 }
