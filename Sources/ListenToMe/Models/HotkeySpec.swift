@@ -70,6 +70,11 @@ struct HotkeySpec: Codable, Equatable, Sendable {
     }
   }
 
+  /// Space-to-lock can't share the same physical key as the primary shortcut.
+  var usesSpaceKey: Bool {
+    keyCode == UInt32(kVK_Space)
+  }
+
   private var modifierSymbols: String {
     var symbols = ""
     if carbonModifiers & UInt32(controlKey) != 0 { symbols += "⌃" }

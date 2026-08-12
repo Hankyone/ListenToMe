@@ -111,6 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     hotkey.onLock = { [weak self] in
       self?.lockDictationFromHold()
     }
+    hotkey.tapStartsHandsFree = { [weak self] in
+      self?.model.settings.tapStartsHandsFree ?? true
+    }
+    hotkey.holdIsPushToTalk = { [weak self] in
+      self?.model.settings.holdIsPushToTalk ?? true
+    }
     applyHotkey(model.settings.hotkey)
 
     model.settings.$hotkey
@@ -190,8 +196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlayController?.update(for: .recording, enabled: true)
       }
       // Escape/Space via CGEvent tap — Space armed only for this hold.
+      // Never arm when the shortcut's own key is Space (⌃⌥Space etc.) — that
+      // same keydown/repeat would false-trigger "lock" and leave a zombie take.
       hotkey.setSessionControlsActive(true)
-      hotkey.setSpaceLockArmed(model.settings.spaceLocksHandsFree)
+      let canSpaceLock =
+        model.settings.spaceLocksHandsFree
+        && !model.settings.hotkey.usesSpaceKey
+      hotkey.setSpaceLockArmed(canSpaceLock)
       Task {
         await model.recording.start()
       }
@@ -287,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private func lockDictationFromHold() {
     guard model.settings.spaceLocksHandsFree else { return }
+    guard !model.settings.hotkey.usesSpaceKey else { return }
     // Allow lock as soon as this press started a take — phase may not have
     // flipped to .recording yet if start() is still hopping onto MainActor.
     if pressStartedRecording
@@ -300,10 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       // must be free to finish.
       pressStartedRecording = false
       pressAt = nil
-      // Keep the plate up with clear "how to finish" copy.
-      if model.settings.showRecordingOverlay {
-        overlayController?.update(for: .recording, enabled: true)
-      }
+      // Always surface the plate when locking — otherwise orange icon with no UI.
+      overlayController?.update(for: .recording, enabled: true)
     }
   }
 
@@ -702,13 +712,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {
+    // Orange only while actually listening — failed/error used the same tint
+    // and looked like a stuck "locked" session with no overlay.
     let isListening = phase == .recording || phase == .connecting
-    let needsAttention =
-      phase == .failed || model.recording.errorMessage != nil
-    statusItem?.button?.image = StatusMenuIcon.statusImage(
-      isActive: isListening || needsAttention
-    )
-    // Tint is baked into the active image; clear any leftover contentTint.
+    statusItem?.button?.image = StatusMenuIcon.statusImage(isActive: isListening)
     statusItem?.button?.contentTintColor = nil
     statusItem?.button?.toolTip = "ListenToMe · \(statusTitle)"
   }

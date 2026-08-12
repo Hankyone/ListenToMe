@@ -140,6 +140,11 @@ final class HotkeyService {
   var onRelease: (() -> Void)?
   var onCancel: (() -> Void)?
   var onLock: (() -> Void)?
+  /// When true, a quick modifier tap (release before hold confirm) starts
+  /// hands-free listening instead of doing nothing.
+  var tapStartsHandsFree: () -> Bool = { true }
+  /// When false, modifier holds never auto-start after the confirm delay.
+  var holdIsPushToTalk: () -> Bool = { true }
 
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
@@ -152,6 +157,8 @@ final class HotkeyService {
   private var holdCandidateGeneration = 0
   private var holdCandidateIsPending = false
   private var holdIsActive = false
+  /// True when a modifier-down started a take via the delayed hold confirm.
+  private var holdStartedThisPress = false
   private let holdConfirmDelay: TimeInterval = 0.2
 
   fileprivate let sessionTapState = SessionTapState()
@@ -381,38 +388,56 @@ final class HotkeyService {
 
     if isPress {
       modifierKeyIsDown = true
-      // While a take is already live (tap-toggle or Space-locked), a tap of
-      // the modifier must finish immediately — the 200ms hold confirm made
-      // "press again to finish" feel like a dead key.
+      holdStartedThisPress = false
+      // While a take is already live, finish immediately on tap.
       if sessionControlsActive {
         holdCandidateIsPending = false
         holdIsActive = true
         onPress?()
         return
       }
-      holdCandidateIsPending = true
-      holdCandidateGeneration += 1
-      let generation = holdCandidateGeneration
-      let delay = holdConfirmDelay
-      Task { [weak self] in
-        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-        guard let self,
-          self.holdCandidateIsPending,
-          self.holdCandidateGeneration == generation
-        else {
-          return
+
+      let wantsTap = tapStartsHandsFree()
+      let wantsHold = holdIsPushToTalk()
+
+      if wantsHold {
+        // Wait briefly to see if this is a hold (PTT) or a quick tap.
+        holdCandidateIsPending = true
+        holdCandidateGeneration += 1
+        let generation = holdCandidateGeneration
+        let delay = holdConfirmDelay
+        Task { [weak self] in
+          try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+          guard let self,
+            self.holdCandidateIsPending,
+            self.holdCandidateGeneration == generation
+          else {
+            return
+          }
+          self.holdCandidateIsPending = false
+          self.holdIsActive = true
+          self.holdStartedThisPress = true
+          self.onPress?()
         }
-        self.holdCandidateIsPending = false
-        self.holdIsActive = true
-        self.onPress?()
+      } else if wantsTap {
+        // Tap-only modifier: start immediately on down.
+        holdIsActive = true
+        holdStartedThisPress = true
+        onPress?()
       }
     } else {
       modifierKeyIsDown = false
+      let wasPending = holdCandidateIsPending
       holdCandidateIsPending = false
       let wasActive = holdIsActive
       holdIsActive = false
+      holdStartedThisPress = false
+
       if wasActive {
         onRelease?()
+      } else if wasPending, tapStartsHandsFree(), !sessionControlsActive {
+        // Released before the hold confirm — treat as a tap: start hands-free.
+        onPress?()
       }
     }
   }

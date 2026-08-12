@@ -26,12 +26,13 @@ struct RootView: View {
   }
 
   private var topNavigation: some View {
-    ZStack {
-      HStack(spacing: 4) {
-        SpeechToCursorMark()
-          .frame(width: 36, height: 20)
-          .padding(.trailing, 2)
+    HStack(spacing: 0) {
+      SpeechToCursorMark()
+        .frame(width: 36, height: 20)
 
+      Spacer(minLength: 8)
+
+      HStack(spacing: 4) {
         ForEach(AppSection.allCases) { section in
           TopNavTab(
             section: section,
@@ -42,16 +43,16 @@ struct RootView: View {
         }
       }
 
-      HStack {
-        Spacer(minLength: 0)
-        Text(statusCaption)
-          .font(.system(size: 11, design: .rounded))
-          .foregroundStyle(
-            recording.phase.isRecording ? AppTheme.accent : AppTheme.faintText
-          )
-          .contentTransition(.opacity)
-          .animation(.easeOut(duration: 0.18), value: statusCaption)
-      }
+      Spacer(minLength: 8)
+
+      Text(statusCaption)
+        .font(.system(size: 11, design: .rounded))
+        .foregroundStyle(
+          recording.phase.isRecording ? AppTheme.accent : AppTheme.faintText
+        )
+        .contentTransition(.opacity)
+        .animation(.easeOut(duration: 0.18), value: statusCaption)
+        .frame(minWidth: 72, alignment: .trailing)
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
