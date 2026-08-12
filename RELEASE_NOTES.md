@@ -1,3 +1,3 @@
-## ListenToMe 0.3.36
+## ListenToMe 0.3.37
 
-- Checking for updates twice no longer crashes on macOS 27 (Sparkle’s window is not ordered forward again while a check is already showing)
+- Spoken “correction”, “I mean”, and “scratch that” now rewrite the transcript in the app (live STT was leaving the cue in). “Montreal, correction to Toronto” pastes as Toronto

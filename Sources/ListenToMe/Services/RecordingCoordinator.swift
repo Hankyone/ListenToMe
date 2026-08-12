@@ -295,7 +295,7 @@ final class RecordingCoordinator: ObservableObject {
         prompt: configuration.prompt,
         languages: configuration.languages
       )
-      history.updateTranscript(id: id, transcript: text)
+      history.updateTranscript(id: id, transcript: SpokenCorrection.apply(text))
     } catch {
       errorMessage = UserFacingError.message(from: error.localizedDescription)
     }
@@ -575,10 +575,10 @@ final class RecordingCoordinator: ObservableObject {
 
     case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
-      // Source of truth for delivery — includes spoken "correction" rewrites.
-      liveDraft.applyCompleted(transcript)
+      let polished = SpokenCorrection.apply(transcript)
+      liveDraft.applyCompleted(polished)
       Task {
-        await finalize(transcript: transcript)
+        await finalize(transcript: polished)
       }
 
     case .error(let message):
@@ -605,6 +605,13 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func applyLiveSnapshot(_ snapshot: LiveTranscriptSnapshot) {
+    let polished = SpokenCorrection.apply(snapshot.display)
+    if polished != snapshot.display {
+      committedTranscript = polished
+      tentativeTranscript = ""
+      partialTranscript = polished
+      return
+    }
     committedTranscript = snapshot.committed
     tentativeTranscript = snapshot.tentative
     partialTranscript = snapshot.display
@@ -628,7 +635,8 @@ final class RecordingCoordinator: ObservableObject {
       audioSendTask = nil
     }
 
-    let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    let finalText = SpokenCorrection.apply(transcript)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !finalText.isEmpty, let recordingURL else {
       await recycleOrDropClient()
       if recordingFileHasAudio() {
