@@ -166,6 +166,12 @@ struct SettingsContentView: View {
             isOn: $settings.showRecordingOverlay
           )
           .toggleStyle(.checkbox)
+
+          Toggle(
+            "Play a soft sound when listening starts and stops",
+            isOn: $settings.playDictationSounds
+          )
+          .toggleStyle(.checkbox)
         }
 
         Text(shortcutBehaviorSummary)

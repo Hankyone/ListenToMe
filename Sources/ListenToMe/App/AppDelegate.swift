@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     configureHotkey()
 
+    // Preload start/stop cues so the first hotkey has zero audio hitch.
+    DictationSoundService.shared.prepare()
+
     // Warm mic + OpenAI realtime while idle so hotkey isn't cold.
     // Await mic warm so the first take promotes instead of engine.start().
     Task { @MainActor [weak self] in
@@ -98,8 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if self.model.recording.isHandsFreeLocked,
         self.model.recording.phase == .recording
       {
+        self.playStopCueIfEnabled()
         Task { await self.model.recording.stop() }
       } else {
+        self.playStopCueIfEnabled()
         self.model.recording.cancelDictation()
       }
     }
@@ -179,7 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     case .idle, .delivered, .failed:
       pressStartedRecording = true
       pressAt = Date()
-      // Paint the overlay on the hotkey thread before any async start work.
+      // Cue + overlay on the hotkey thread — before any async start work.
+      playStartCueIfEnabled()
       if model.settings.showRecordingOverlay {
         overlayController?.update(for: .recording, enabled: true)
       }
@@ -193,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       // Second press always finishes — including after Space-lock.
       pressStartedRecording = false
       hotkey.setSpaceLockArmed(false)
+      playStopCueIfEnabled()
       if model.settings.showRecordingOverlay {
         overlayController?.update(for: .finishing, enabled: true)
       }
@@ -249,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if model.settings.showRecordingOverlay {
       overlayController?.update(for: .finishing, enabled: true)
     }
+    playStopCueIfEnabled()
 
     pendingReleaseTask?.cancel()
     let grace = releaseGraceNanoseconds
@@ -265,6 +273,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
       await self.model.recording.requestStop()
     }
+  }
+
+  private func playStartCueIfEnabled() {
+    guard model.settings.playDictationSounds else { return }
+    DictationSoundService.shared.playStart()
+  }
+
+  private func playStopCueIfEnabled() {
+    guard model.settings.playDictationSounds else { return }
+    DictationSoundService.shared.playStop()
   }
 
   private func lockDictationFromHold() {

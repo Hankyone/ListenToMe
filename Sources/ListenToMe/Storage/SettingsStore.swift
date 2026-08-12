@@ -8,6 +8,11 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(showRecordingOverlay, forKey: Keys.showRecordingOverlay) }
   }
 
+  /// Soft start/stop chimes when dictation begins and ends.
+  @Published var playDictationSounds: Bool {
+    didSet { defaults.set(playDictationSounds, forKey: Keys.playDictationSounds) }
+  }
+
   /// Tap the shortcut → keep listening until you tap it again.
   @Published var tapStartsHandsFree: Bool {
     didSet { defaults.set(tapStartsHandsFree, forKey: Keys.tapStartsHandsFree) }
@@ -74,6 +79,7 @@ final class SettingsStore: ObservableObject {
 
   private enum Keys {
     static let showRecordingOverlay = "appearance.showRecordingOverlay"
+    static let playDictationSounds = "appearance.playDictationSounds"
     static let tapStartsHandsFree = "hotkey.tapStartsHandsFree"
     static let holdIsPushToTalk = "hotkey.holdIsPushToTalk"
     static let spaceLocksHandsFree = "hotkey.spaceLocksHandsFree"
@@ -96,6 +102,9 @@ final class SettingsStore: ObservableObject {
     self.apiKeys = apiKeys
     showRecordingOverlay =
       defaults.object(forKey: Keys.showRecordingOverlay) as? Bool
+      ?? true
+    playDictationSounds =
+      defaults.object(forKey: Keys.playDictationSounds) as? Bool
       ?? true
     tapStartsHandsFree =
       defaults.object(forKey: Keys.tapStartsHandsFree) as? Bool
