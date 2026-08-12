@@ -232,6 +232,9 @@ final class HotkeyService {
     } else {
       setSpaceLockArmed(false)
       tearDownSessionTap()
+      // A missed key-up while the take ended must not latch comboIsDown and
+      // drop every later press.
+      comboIsDown = false
     }
   }
 
@@ -240,11 +243,10 @@ final class HotkeyService {
     case .primary:
       if kind == UInt32(kEventHotKeyPressed) {
         if comboIsDown {
-          // Missed key-up (common after Space-lock swallows a key). If a take
-          // is live, treat this as "press again to finish".
-          if sessionControlsActive {
-            onPress?()
-          }
+          // Missed key-up (common after Space-lock swallows a key, or after
+          // Setup capture unregisters mid-hold). Always deliver the press so
+          // idle can start and a live take can finish.
+          onPress?()
           return
         }
         comboIsDown = true
@@ -387,45 +389,8 @@ final class HotkeyService {
     let isPress = flagPresent && !modifierKeyIsDown
 
     if isPress {
-      modifierKeyIsDown = true
-      holdStartedThisPress = false
-      // While a take is already live, finish immediately on tap.
-      if sessionControlsActive {
-        holdCandidateIsPending = false
-        holdIsActive = true
-        onPress?()
-        return
-      }
-
-      let wantsTap = tapStartsHandsFree()
-      let wantsHold = holdIsPushToTalk()
-
-      if wantsHold {
-        // Wait briefly to see if this is a hold (PTT) or a quick tap.
-        holdCandidateIsPending = true
-        holdCandidateGeneration += 1
-        let generation = holdCandidateGeneration
-        let delay = holdConfirmDelay
-        Task { [weak self] in
-          try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-          guard let self,
-            self.holdCandidateIsPending,
-            self.holdCandidateGeneration == generation
-          else {
-            return
-          }
-          self.holdCandidateIsPending = false
-          self.holdIsActive = true
-          self.holdStartedThisPress = true
-          self.onPress?()
-        }
-      } else if wantsTap {
-        // Tap-only modifier: start immediately on down.
-        holdIsActive = true
-        holdStartedThisPress = true
-        onPress?()
-      }
-    } else {
+      beginModifierPress()
+    } else if !flagPresent {
       modifierKeyIsDown = false
       let wasPending = holdCandidateIsPending
       holdCandidateIsPending = false
@@ -439,6 +404,47 @@ final class HotkeyService {
         // Released before the hold confirm — treat as a tap: start hands-free.
         onPress?()
       }
+    }
+  }
+
+  private func beginModifierPress() {
+    modifierKeyIsDown = true
+    holdStartedThisPress = false
+    // While a take is already live, finish immediately on tap.
+    if sessionControlsActive {
+      holdCandidateIsPending = false
+      holdIsActive = true
+      onPress?()
+      return
+    }
+
+    let wantsTap = tapStartsHandsFree()
+    let wantsHold = holdIsPushToTalk()
+
+    if wantsHold {
+      // Wait briefly to see if this is a hold (PTT) or a quick tap.
+      holdCandidateIsPending = true
+      holdCandidateGeneration += 1
+      let generation = holdCandidateGeneration
+      let delay = holdConfirmDelay
+      Task { [weak self] in
+        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        guard let self,
+          self.holdCandidateIsPending,
+          self.holdCandidateGeneration == generation
+        else {
+          return
+        }
+        self.holdCandidateIsPending = false
+        self.holdIsActive = true
+        self.holdStartedThisPress = true
+        self.onPress?()
+      }
+    } else if wantsTap {
+      // Tap-only modifier: start immediately on down.
+      holdIsActive = true
+      holdStartedThisPress = true
+      onPress?()
     }
   }
 

@@ -2,11 +2,19 @@ import AppKit
 import Carbon
 import SwiftUI
 
+/// Holds the NSEvent monitor off the SwiftUI view value so cancel/commit
+/// cannot leave a stale callback swallowing keys after capture ends.
+@MainActor
+private final class HotkeyCaptureBox {
+  var monitor: Any?
+  var generation = 0
+}
+
 /// A keycap-styled control that captures any shortcut: a key with modifiers,
 /// a bare function key, or a single held modifier such as Right ⌘ or Globe.
 struct HotkeyRecorderView: View {
   @ObservedObject var settings: SettingsStore
-  @State private var monitor: Any?
+  @State private var capture = HotkeyCaptureBox()
   @State private var hint = ""
 
   var body: some View {
@@ -80,6 +88,13 @@ struct HotkeyRecorderView: View {
     .onDisappear {
       endCapture()
     }
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: NSApplication.willResignActiveNotification
+      )
+    ) { _ in
+      endCapture()
+    }
   }
 
   private var hintLine: String {
@@ -87,34 +102,43 @@ struct HotkeyRecorderView: View {
       return hint
     }
     if settings.isCapturingHotkey {
-      return "Press a key combination, or press and release one modifier alone, like Right ⌘ or Globe. Esc keeps the current shortcut."
+      return "Press a key combination, or press and release one modifier alone, like Right ⌘ or Globe. Esc or Space keeps the current shortcut."
     }
     return "Behaviors for this shortcut are below — tap, hold, and Space lock."
   }
 
   private func beginCapture() {
-    guard monitor == nil else { return }
+    guard capture.monitor == nil else { return }
     hint = ""
     settings.isCapturingHotkey = true
+    capture.generation += 1
+    let generation = capture.generation
 
     var candidateModifier: UInt32?
-    monitor = NSEvent.addLocalMonitorForEvents(
+    capture.monitor = NSEvent.addLocalMonitorForEvents(
       matching: [.keyDown, .flagsChanged]
     ) { event in
+      var swallow = true
       MainActor.assumeIsolated {
+        guard generation == capture.generation else {
+          swallow = false
+          return
+        }
+
         switch event.type {
         case .keyDown:
-          if event.keyCode == UInt16(kVK_Escape),
-            event.modifierFlags
-              .intersection([.command, .option, .control, .shift])
-              .isEmpty
+          let extraModifiers = event.modifierFlags
+            .intersection([.command, .option, .control, .shift])
+          if extraModifiers.isEmpty,
+            event.keyCode == UInt16(kVK_Escape)
+            || event.keyCode == UInt16(kVK_Space)
+            || event.keyCode == UInt16(kVK_Return)
           {
             endCapture()
             return
           }
 
-          let modifiers = event.modifierFlags
-            .intersection([.command, .option, .control, .shift])
+          let modifiers = extraModifiers
           let isFunctionKey = KeyGlyphs.isFunctionKey(UInt32(event.keyCode))
           let hasHardModifier = !modifiers
             .intersection([.command, .option, .control])
@@ -158,7 +182,7 @@ struct HotkeyRecorderView: View {
           break
         }
       }
-      return nil
+      return swallow ? nil : event
     }
   }
 
@@ -169,9 +193,10 @@ struct HotkeyRecorderView: View {
   }
 
   private func endCapture() {
-    if let monitor {
+    capture.generation += 1
+    if let monitor = capture.monitor {
       NSEvent.removeMonitor(monitor)
-      self.monitor = nil
+      capture.monitor = nil
     }
     settings.isCapturingHotkey = false
   }

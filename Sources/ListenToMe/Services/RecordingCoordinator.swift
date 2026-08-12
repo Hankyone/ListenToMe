@@ -49,6 +49,9 @@ final class RecordingCoordinator: ObservableObject {
   private var liveStreamDetached = false
   /// Prevents overlapping fail/cancel/finalize paths from trashing the take.
   private var isClosingTake = false
+  /// Bumped on start/stop so an in-flight `start()` cannot open the mic after
+  /// a later press already asked to stop.
+  private var takeID = 0
 
   init(
     settings: SettingsStore,
@@ -61,18 +64,23 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func toggle() async {
-    switch phase {
-    case .idle, .delivered, .failed:
+    switch HotkeyTakePolicy.actionForPress(phase: phase, pendingReleaseStop: false) {
+    case .start:
       await start()
-    case .recording:
-      await stop()
-    case .connecting, .finishing:
+    case .stop:
+      await requestStop()
+    case .finishNow:
+      await finishNow()
+    case .continueTake:
       break
     }
   }
 
   func start() async {
     guard !phase.isBusy else { return }
+
+    takeID += 1
+    let id = takeID
 
     // Paint live UI first. Never run AppleScript / engine.start / TLS on the
     // main thread — that froze the overlay at 0:00 with a dead waveform.
@@ -95,6 +103,10 @@ final class RecordingCoordinator: ObservableObject {
     // Duck media off-main immediately (was blocking MainActor 5–8s via AppleScript).
     mediaPause.begin()
     await Task.yield()
+    guard id == takeID else {
+      await abortIncompleteStart()
+      return
+    }
 
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
@@ -136,12 +148,26 @@ final class RecordingCoordinator: ObservableObject {
       )
       return
     }
+    guard id == takeID else {
+      await abortIncompleteStart()
+      return
+    }
 
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
+      guard id == takeID else {
+        await abortIncompleteStart()
+        return
+      }
 
       try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
+      guard id == takeID else {
+        _ = await audioCapture.stop()
+        await cleanUpConnection()
+        await abortIncompleteStart()
+        return
+      }
 
       if stopRequestedWhileStarting {
         stopRequestedWhileStarting = false
@@ -182,11 +208,12 @@ final class RecordingCoordinator: ObservableObject {
     prepareRealtimeSession()
   }
 
-  /// Stop that is safe to call from the hotkey release handler even while
-  /// `start()` is still opening the microphone.
+  /// Stop that is safe to call from the hotkey even while `start()` is still
+  /// opening the microphone. Extra presses bump `takeID` so a late start
+  /// cannot reopen the mic after this stop.
   func requestStop() async {
+    takeID += 1
     if phase == .recording {
-      // Capture may still be opening off-main; remember the release.
       if audioContinuation == nil, audioSendTask == nil {
         stopRequestedWhileStarting = true
         return
@@ -195,6 +222,13 @@ final class RecordingCoordinator: ObservableObject {
     } else if phase == .connecting {
       stopRequestedWhileStarting = true
     }
+  }
+
+  /// Flush a hung finalize so the next press can start a new take.
+  func finishNow() async {
+    takeID += 1
+    guard phase == .finishing else { return }
+    await finishWithBestAvailableTranscript()
   }
 
   func setHandsFreeLocked(_ locked: Bool) {
@@ -207,6 +241,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func stop() async {
+    takeID += 1
     guard phase == .recording else { return }
     phase = .finishing
     if let startedAt {
@@ -227,8 +262,16 @@ final class RecordingCoordinator: ObservableObject {
     audioContinuation?.finish()
     audioContinuation = nil
 
-    await audioSendTask?.value
+    let sendTask = audioSendTask
     audioSendTask = nil
+    if let sendTask {
+      let timeout = Task {
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        sendTask.cancel()
+      }
+      await sendTask.value
+      timeout.cancel()
+    }
 
     do {
       try await client?.commit()
@@ -851,6 +894,23 @@ final class RecordingCoordinator: ObservableObject {
   private func recordingFileHasAudio() -> Bool {
     guard let recordingURL else { return false }
     return HistoryStore.hasPreservableAudio(at: recordingURL)
+  }
+
+  /// `start()` lost the race to a later stop/press. Drop the half-open take
+  /// so the hotkey is not stuck in `.recording`.
+  private func abortIncompleteStart() async {
+    guard phase == .recording, !didFinalizeCurrentRecording else { return }
+    mediaPause.end()
+    elapsedTask?.cancel()
+    elapsedTask = nil
+    listenStartedAt = nil
+    isHandsFreeLocked = false
+    stopRequestedWhileStarting = false
+    phase = .idle
+    discardCurrentRecording()
+    teardownSession()
+    resetRecordingReferences()
+    prepareForNextTake()
   }
 
   /// End a take with nothing to deliver — no banner, no "Dictation stopped".

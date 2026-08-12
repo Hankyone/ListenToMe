@@ -1,3 +1,3 @@
-## ListenToMe 0.3.41
+## ListenToMe 0.3.42
 
-- OpenAI only: removed the OpenRouter provider and its batch-only Whisper path. Dictation always uses live `gpt-live-transcribe`; file fallback and History reprocess still use `gpt-4o-mini-transcribe`
+- Dictation shortcut stays usable after a missed key-up, a stuck Setup capture, or a burst of extra presses. Idle always starts, a live take always stops, and a hung finish can be flushed with another press

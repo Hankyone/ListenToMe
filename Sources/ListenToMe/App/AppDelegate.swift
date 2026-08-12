@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var pressAt: Date?
   private var lastPressAt: Date?
   private var pendingReleaseTask: Task<Void, Never>?
+  /// Last shortcut Carbon actually accepted, so a failed re-register cannot
+  /// leave the user with no dictation key at all.
+  private var registeredHotkey: HotkeySpec?
 
   /// Holding the key past this long means push-to-talk: release stops.
   /// A quicker tap leaves dictation running until the next tap.
@@ -164,18 +167,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func applyHotkey(_ spec: HotkeySpec) {
-    guard hotkey.register(spec) else {
-      model.recording.errorMessage =
-        "\(spec.display) could not be registered. Another app may already use it. Pick a different shortcut in Setup."
+    if hotkey.register(spec) {
+      registeredHotkey = spec
       return
     }
+    if let registeredHotkey, registeredHotkey != spec {
+      _ = hotkey.register(registeredHotkey)
+    }
+    model.recording.errorMessage =
+      "\(spec.display) could not be registered. Another app may already use it. Pick a different shortcut in Setup."
   }
 
   private func hotkeyPressed() {
-    // A press during the release-grace window cancels the pending stop.
-    if pendingReleaseTask != nil {
+    let pendingReleaseStop = pendingReleaseTask != nil
+    if pendingReleaseStop {
       pendingReleaseTask?.cancel()
       pendingReleaseTask = nil
+    }
+
+    let action = HotkeyTakePolicy.actionForPress(
+      phase: model.recording.phase,
+      pendingReleaseStop: pendingReleaseStop
+    )
+    if action == .continueTake {
       return
     }
 
@@ -184,8 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     lastPressAt = Date()
 
-    switch model.recording.phase {
-    case .idle, .delivered, .failed:
+    switch action {
+    case .continueTake:
+      return
+    case .start:
       pressStartedRecording = true
       pressAt = Date()
       // Cue + overlay on the hotkey thread — before any async start work.
@@ -204,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       Task {
         await model.recording.start()
       }
-    case .recording:
+    case .stop:
       // Second press always finishes — including after Space-lock.
       pressStartedRecording = false
       hotkey.setSpaceLockArmed(false)
@@ -213,10 +229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlayController?.update(for: .finishing, enabled: true)
       }
       Task {
-        await model.recording.stop()
+        await model.recording.requestStop()
       }
-    case .connecting, .finishing:
-      break
+    case .finishNow:
+      pressStartedRecording = false
+      hotkey.setSpaceLockArmed(false)
+      Task {
+        await model.recording.finishNow()
+      }
     }
   }
 
@@ -580,6 +600,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkey.setSessionControlsActive(
           phase == .recording || phase == .connecting
         )
+        if !phase.isBusy {
+          pressStartedRecording = false
+          pressAt = nil
+        }
       }
       .store(in: &subscriptions)
 
