@@ -193,62 +193,11 @@ enum MicProfile: String, CaseIterable, Identifiable, Codable, Sendable {
   }
 }
 
-enum APIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
-  case openAI
-  case openRouter
-
-  var id: String { rawValue }
-
-  var title: String {
-    switch self {
-    case .openAI: "OpenAI"
-    case .openRouter: "OpenRouter"
-    }
-  }
-
-  var keyPlaceholder: String {
-    switch self {
-    case .openAI: "sk-…"
-    case .openRouter: "sk-or-…"
-    }
-  }
-
-  var createKeyURL: URL {
-    switch self {
-    case .openAI:
-      URL(string: "https://platform.openai.com/api-keys")!
-    case .openRouter:
-      URL(string: "https://openrouter.ai/keys")!
-    }
-  }
-
-  var createKeyLabel: String {
-    switch self {
-    case .openAI: "Create an OpenAI API key"
-    case .openRouter: "Create an OpenRouter API key"
-    }
-  }
-
-  /// Live partial transcripts need OpenAI's realtime websocket.
-  var supportsLiveStreaming: Bool {
-    self == .openAI
-  }
-
-  var keyFileName: String {
-    switch self {
-    case .openAI: "openai-api-key"
-    case .openRouter: "openrouter-api-key"
-    }
-  }
-
-  var dictationModeNote: String {
-    switch self {
-    case .openAI:
-      "Live transcription over a warm OpenAI realtime WebSocket while you speak."
-    case .openRouter:
-      "No live WebSocket — audio is recorded locally and transcribed when you stop (batch). History reprocess works the same way."
-    }
-  }
+enum OpenAIService {
+  static let keyPlaceholder = "sk-…"
+  static let createKeyLabel = "Create an OpenAI API key"
+  static let keyFileName = "openai-api-key"
+  static let createKeyURL = URL(string: "https://platform.openai.com/api-keys")!
 }
 
 enum WritingGuidance {

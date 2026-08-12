@@ -121,12 +121,7 @@ struct VocabularyView: View {
           }
           .labelsHidden()
           .pickerStyle(.segmented)
-          .disabled(settings.apiProvider != .openAI)
-          Text(
-            settings.apiProvider == .openAI
-              ? settings.delay.explanation
-              : "Response timing applies to OpenAI live transcription only."
-          )
+          Text(settings.delay.explanation)
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.faintText)
         }

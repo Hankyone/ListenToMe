@@ -61,18 +61,7 @@ struct SettingsContentView: View {
   private var keySection: some View {
     SettingsSection(title: "API key") {
       VStack(alignment: .leading, spacing: 12) {
-        Picker("Provider", selection: $settings.apiProvider) {
-          ForEach(APIProvider.allCases) { provider in
-            Text(provider.title).tag(provider)
-          }
-        }
-        .pickerStyle(.segmented)
-        .onChange(of: settings.apiProvider) { _, _ in
-          apiKey = ""
-          keyStatus = ""
-        }
-
-        Text(settings.apiProvider.dictationModeNote)
+        Text("Live transcription over a warm OpenAI realtime WebSocket while you speak.")
           .font(.system(size: 12))
           .foregroundStyle(AppTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
@@ -81,7 +70,7 @@ struct SettingsContentView: View {
           ThemedTextField(
             placeholder: settings.hasAPIKey && apiKey.isEmpty
               ? "Key saved — paste a new one to replace"
-              : settings.apiProvider.keyPlaceholder,
+              : OpenAIService.keyPlaceholder,
             text: $apiKey,
             isSecure: true,
             onSubmit: saveAPIKey
@@ -107,16 +96,16 @@ struct SettingsContentView: View {
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
         } else if !settings.hasAPIKey {
-          Text("Paste your \(settings.apiProvider.title) API key here, then Save Key")
+          Text("Paste your OpenAI API key here, then Save Key")
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
         }
 
         Button {
-          NSWorkspace.shared.open(settings.apiProvider.createKeyURL)
+          NSWorkspace.shared.open(OpenAIService.createKeyURL)
         } label: {
           Label(
-            settings.apiProvider.createKeyLabel,
+            OpenAIService.createKeyLabel,
             systemImage: "arrow.up.right.square"
           )
           .font(.system(size: 12, weight: .medium))
@@ -250,12 +239,7 @@ struct SettingsContentView: View {
           }
           .labelsHidden()
           .frame(width: 200)
-          .disabled(settings.apiProvider != .openAI)
-          Text(
-            settings.apiProvider == .openAI
-              ? settings.micProfile.explanation
-              : "Noise reduction is applied by OpenAI live sessions only."
-          )
+          Text(settings.micProfile.explanation)
           .font(.system(size: 11))
           .foregroundStyle(AppTheme.faintText)
         }
@@ -318,7 +302,7 @@ struct SettingsContentView: View {
       keyStatus =
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "API key removed"
-        : "\(settings.apiProvider.title) API key saved"
+        : "OpenAI API key saved"
       apiKey = ""
     } catch {
       keyStatus = error.localizedDescription

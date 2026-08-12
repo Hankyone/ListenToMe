@@ -1,3 +1,3 @@
-## ListenToMe 0.3.40
+## ListenToMe 0.3.41
 
-- Removed the extra gpt-4o-mini hop and the spoken-correction regex. What you say is what gets pasted; live STT is the only model on the path
+- OpenAI only: removed the OpenRouter provider and its batch-only Whisper path. Dictation always uses live `gpt-live-transcribe`; file fallback and History reprocess still use `gpt-4o-mini-transcribe`

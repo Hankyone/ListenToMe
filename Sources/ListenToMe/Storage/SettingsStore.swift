@@ -50,13 +50,6 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(microphonePriorityUIDs, forKey: Keys.microphonePriorityUIDs) }
   }
 
-  @Published var apiProvider: APIProvider {
-    didSet {
-      defaults.set(apiProvider.rawValue, forKey: Keys.apiProvider)
-      refreshAPIKeyPresence()
-    }
-  }
-
   @Published var hotkey: HotkeySpec {
     didSet {
       guard let data = try? JSONEncoder().encode(hotkey) else { return }
@@ -90,7 +83,6 @@ final class SettingsStore: ObservableObject {
     static let micProfile = "transcription.micProfile"
     static let microphoneDeviceUID = "audio.microphoneDeviceUID"
     static let microphonePriorityUIDs = "audio.microphonePriorityUIDs"
-    static let apiProvider = "transcription.apiProvider"
     static let hotkey = "hotkey.spec"
   }
 
@@ -151,10 +143,6 @@ final class SettingsStore: ObservableObject {
       migratedPriority = [MicrophoneInput.systemDefaultID]
     }
     microphonePriorityUIDs = migratedPriority
-    apiProvider =
-      APIProvider(
-        rawValue: defaults.string(forKey: Keys.apiProvider) ?? ""
-      ) ?? .openAI
 
     if let data = defaults.data(forKey: Keys.hotkey),
       let stored = try? JSONDecoder().decode(HotkeySpec.self, from: data)
@@ -173,7 +161,7 @@ final class SettingsStore: ObservableObject {
     }
 
     // File presence only — never load the secret at launch.
-    hasAPIKey = apiKeys.hasStoredKey(provider: apiProvider)
+    hasAPIKey = apiKeys.hasStoredKey()
   }
 
   var languageHints: LanguageHintValidation.Result {
@@ -271,7 +259,7 @@ final class SettingsStore: ObservableObject {
   }
 
   func loadAPIKey() throws -> String {
-    let value = try apiKeys.loadAPIKey(provider: apiProvider) ?? ""
+    let value = try apiKeys.loadAPIKey() ?? ""
     let present = !value.isEmpty
     if hasAPIKey != present {
       hasAPIKey = present
@@ -280,12 +268,12 @@ final class SettingsStore: ObservableObject {
   }
 
   func saveAPIKey(_ value: String) throws {
-    try apiKeys.saveAPIKey(value, provider: apiProvider)
+    try apiKeys.saveAPIKey(value)
     hasAPIKey = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   func refreshAPIKeyPresence() {
-    hasAPIKey = apiKeys.hasStoredKey(provider: apiProvider)
+    hasAPIKey = apiKeys.hasStoredKey()
   }
 
   func addVocabulary(term: String, oftenHeardAs: String) -> Bool {

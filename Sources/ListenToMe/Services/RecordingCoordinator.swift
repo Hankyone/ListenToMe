@@ -82,7 +82,7 @@ final class RecordingCoordinator: ObservableObject {
     isHandsFreeLocked = false
     isClosingTake = false
     liveStreamDetached = false
-    usesBatchTranscription = !settings.apiProvider.supportsLiveStreaming
+    usesBatchTranscription = false
     liveDraft.reset()
     elapsed = 0
     levels = Array(repeating: 0.04, count: 24)
@@ -107,13 +107,13 @@ final class RecordingCoordinator: ObservableObject {
       apiKey = try settings.loadAPIKey()
     } catch {
       await failAndPreserve(
-        "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+        "The OpenAI API key could not be read. Paste it again in Setup."
       )
       return
     }
     guard !apiKey.isEmpty else {
       await failAndPreserve(
-        "Paste a \(settings.apiProvider.title) API key in Setup before dictating."
+        "Paste an OpenAI API key in Setup before dictating."
       )
       return
     }
@@ -141,11 +141,7 @@ final class RecordingCoordinator: ObservableObject {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
 
-      if usesBatchTranscription {
-        try await startBatchCapture(recordingURL: recordingURL)
-      } else {
-        try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
-      }
+      try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
 
       if stopRequestedWhileStarting {
         stopRequestedWhileStarting = false
@@ -177,7 +173,6 @@ final class RecordingCoordinator: ObservableObject {
 
   /// Pre-open the OpenAI realtime socket while idle (mic warm + WS warm).
   func prepareRealtimeSession() {
-    guard settings.apiProvider.supportsLiveStreaming else { return }
     scheduleStandbyConnection()
   }
 
@@ -269,14 +264,14 @@ final class RecordingCoordinator: ObservableObject {
     } catch {
       errorMessage = UserFacingError.message(
         from:
-          "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+          "The OpenAI API key could not be read. Paste it again in Setup."
       )
       return
     }
     guard !apiKey.isEmpty else {
       errorMessage = UserFacingError.message(
         from:
-          "Paste a \(settings.apiProvider.title) API key in Setup before reprocessing."
+          "Paste an OpenAI API key in Setup before reprocessing."
       )
       return
     }
@@ -290,7 +285,6 @@ final class RecordingCoordinator: ObservableObject {
     do {
       let text = try await FileTranscriptionService.transcribe(
         audioURL: history.audioURL(for: entry),
-        provider: settings.apiProvider,
         apiKey: apiKey,
         prompt: configuration.prompt,
         languages: configuration.languages
@@ -409,7 +403,6 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func scheduleStandbyConnection() {
-    guard settings.apiProvider.supportsLiveStreaming else { return }
     standbyTask?.cancel()
     // Detached so TLS + session.updated never sit on MainActor behind a hotkey.
     standbyTask = Task.detached(priority: .utility) { [weak self] in
@@ -419,7 +412,6 @@ final class RecordingCoordinator: ObservableObject {
 
   private func refreshStandbyConnection() async {
     guard !Task.isCancelled else { return }
-    guard settings.apiProvider.supportsLiveStreaming else { return }
     // Don't fight an active take.
     switch phase {
     case .connecting, .recording, .finishing:
@@ -504,24 +496,6 @@ final class RecordingCoordinator: ObservableObject {
     await parkClientForStandby(realtime)
   }
 
-  private func startBatchCapture(recordingURL: URL) async throws {
-    try await audioCapture.start(
-      recordingURL: recordingURL,
-      deviceUID: settings.preferredMicrophoneUID(),
-      onPCMChunk: { _ in },
-      onLevel: { [weak self] level in
-        DispatchQueue.main.async {
-          self?.appendLevel(level)
-        }
-      },
-      onError: { [weak self] error in
-        DispatchQueue.main.async {
-          Task { await self?.failAndPreserve(error.localizedDescription) }
-        }
-      }
-    )
-  }
-
   private func stopBatchTranscription() async {
     _ = await audioCapture.stop()
 
@@ -536,7 +510,7 @@ final class RecordingCoordinator: ObservableObject {
     } catch {
       await persistFailedTake(
         message:
-          "The \(settings.apiProvider.title) API key could not be read. Paste it again in Setup."
+          "The OpenAI API key could not be read. Paste it again in Setup."
       )
       return
     }
@@ -547,7 +521,6 @@ final class RecordingCoordinator: ObservableObject {
     do {
       let text = try await FileTranscriptionService.transcribe(
         audioURL: recordingURL,
-        provider: settings.apiProvider,
         apiKey: apiKey,
         prompt: configuration.prompt,
         languages: configuration.languages
@@ -835,7 +808,6 @@ final class RecordingCoordinator: ObservableObject {
     do {
       return try await FileTranscriptionService.transcribe(
         audioURL: recordingURL,
-        provider: settings.apiProvider,
         apiKey: apiKey,
         prompt: configuration.prompt,
         languages: configuration.languages

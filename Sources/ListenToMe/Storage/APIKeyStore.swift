@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stores API keys in ListenToMe's Application Support folder.
+/// Stores the OpenAI API key in ListenToMe's Application Support folder.
 /// The only way a key appears here is the user pasting it in Setup.
 struct APIKeyStore {
   enum StoreError: LocalizedError {
@@ -23,14 +23,14 @@ struct APIKeyStore {
     self.fileManager = fileManager
   }
 
-  func saveAPIKey(_ value: String, provider: APIProvider) throws {
+  func saveAPIKey(_ value: String) throws {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
-      try deleteAPIKey(provider: provider)
+      try deleteAPIKey()
       return
     }
 
-    let url = try fileURL(for: provider)
+    let url = try fileURL()
     try fileManager.createDirectory(
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -47,13 +47,13 @@ struct APIKeyStore {
   }
 
   /// Whether a key file exists — does not read the secret.
-  func hasStoredKey(provider: APIProvider) -> Bool {
-    guard let url = try? fileURL(for: provider) else { return false }
+  func hasStoredKey() -> Bool {
+    guard let url = try? fileURL() else { return false }
     return fileManager.fileExists(atPath: url.path)
   }
 
-  func loadAPIKey(provider: APIProvider) throws -> String? {
-    let url = try fileURL(for: provider)
+  func loadAPIKey() throws -> String? {
+    let url = try fileURL()
     guard fileManager.fileExists(atPath: url.path) else {
       return nil
     }
@@ -71,13 +71,13 @@ struct APIKeyStore {
     }
   }
 
-  func deleteAPIKey(provider: APIProvider) throws {
-    let url = try fileURL(for: provider)
+  func deleteAPIKey() throws {
+    let url = try fileURL()
     guard fileManager.fileExists(atPath: url.path) else { return }
     try fileManager.removeItem(at: url)
   }
 
-  private func fileURL(for provider: APIProvider) throws -> URL {
+  private func fileURL() throws -> URL {
     guard
       let root = fileManager.urls(
         for: .applicationSupportDirectory,
@@ -88,6 +88,6 @@ struct APIKeyStore {
     }
     return root
       .appendingPathComponent("ca.hankyone.ListenToMe", isDirectory: true)
-      .appendingPathComponent(provider.keyFileName, isDirectory: false)
+      .appendingPathComponent(OpenAIService.keyFileName, isDirectory: false)
   }
 }

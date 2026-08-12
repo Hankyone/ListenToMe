@@ -140,8 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       model.settings.$delay.map { _ in () }.eraseToAnyPublisher(),
       model.settings.$micProfile.map { _ in () }.eraseToAnyPublisher(),
       model.settings.$basePrompt.map { _ in () }.eraseToAnyPublisher(),
-      model.settings.$languageText.map { _ in () }.eraseToAnyPublisher(),
-      model.settings.$apiProvider.map { _ in () }.eraseToAnyPublisher()
+      model.settings.$languageText.map { _ in () }.eraseToAnyPublisher()
     )
     .dropFirst()
     .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
