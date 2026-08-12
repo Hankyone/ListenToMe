@@ -54,7 +54,7 @@ final class LiveTranscriptDraft {
     publish()
   }
 
-  /// Final model transcript replaces the draft entirely (spoken corrections land here).
+  /// Final model transcript replaces the draft entirely.
   func applyCompleted(_ transcript: String) {
     stabilizeTask?.cancel()
     stabilizeTask = nil
