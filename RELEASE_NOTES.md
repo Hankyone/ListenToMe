@@ -1,3 +1,7 @@
+## ListenToMe 0.3.53
+
+- Hold, release, then press again starts the next take instead of playing another stop sound. The previous take still pastes in the background.
+
 ## ListenToMe 0.3.52
 
 - Each take now records a latency trace (hotkey to paste) in Console and in `~/Library/Application Support/ListenToMe/latency.jsonl`, so we can see which step is slow before changing the pipeline.

@@ -81,16 +81,29 @@ final class HotkeyTakePolicyTests: XCTestCase {
     )
   }
 
-  func testFinishingPressStops() {
+  func testImmediateRepressAfterHoldStarts() {
+    XCTAssertEqual(
+      DictationGesturePolicy.pressAction(
+        phase: .finishing,
+        liveKind: .unclassified,
+        liveElapsed: 0,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: 0.05
+      ),
+      .start
+    )
+  }
+
+  func testFinishingPressStartsNextTake() {
     XCTAssertEqual(
       DictationGesturePolicy.pressAction(
         phase: .finishing,
         liveKind: .unclassified,
         liveElapsed: 1,
-        keyPhysicallyDown: false,
-        secondsSinceHoldEnded: nil
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: 0.3
       ),
-      .stop
+      .start
     )
   }
 

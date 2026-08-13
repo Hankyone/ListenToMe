@@ -23,6 +23,20 @@ enum DictationReleaseAction: Equatable {
 }
 
 /// Click vs hold, plus when a take is too short to bother transcribing.
+///
+/// Press (key down):
+/// - Idle / delivered / failed / finishing → start. Finishing means the last
+///   take is still pasting; a real press starts the next take anyway.
+/// - Recording + hold/unclassified while the key is still down → ignore
+///   (Carbon repeat, not a new click).
+/// - Recording + tap within tapRetriggerGrace → ignore (bounce after a click).
+/// - Recording otherwise → stop (second click ends hands-free).
+/// - Ghost keyDown after a hold with the key already up → ignore.
+///
+/// Release (key up), if this press started the take and Space-lock is off:
+/// - Hold, or past holdThreshold → end the take.
+/// - Short press with tap enabled → stay listening (hands-free).
+/// - Hold-only mode → end even if the press was short.
 enum DictationGesturePolicy {
   /// Still down past this → hold. Short enough that a spoken word on PTT
   /// is a hold, not a tap that leaves the plate up.
@@ -30,7 +44,7 @@ enum DictationGesturePolicy {
   /// After a tap-start, a second click this soon is "I meant to use it",
   /// not "I'm done".
   static let tapRetriggerGrace: TimeInterval = 0.40
-  /// After a hold ends, ignore bounce presses so we don't start a new take.
+  /// After a hold ends, ignore a ghost keyDown only when the key is already up.
   static let holdEndIgnoreWindow: TimeInterval = 0.16
   /// Shorter than this: dismiss, skip the transcription pipeline.
   static let minTranscribeDuration: TimeInterval = 0.20
@@ -42,15 +56,16 @@ enum DictationGesturePolicy {
     keyPhysicallyDown: Bool,
     secondsSinceHoldEnded: TimeInterval?
   ) -> HotkeyTakeAction {
-    if let elapsed = secondsSinceHoldEnded, elapsed < holdEndIgnoreWindow {
+    if let elapsed = secondsSinceHoldEnded,
+      elapsed < holdEndIgnoreWindow,
+      !keyPhysicallyDown
+    {
       return .ignore
     }
 
     switch phase {
-    case .idle, .delivered, .failed:
+    case .idle, .delivered, .failed, .finishing:
       return .start
-    case .finishing:
-      return .stop
     case .connecting, .recording:
       break
     }

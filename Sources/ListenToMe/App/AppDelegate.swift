@@ -603,15 +603,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       .sink { [weak self] phase in
         guard let self else { return }
         overlayController?.update(
-          for: phase,
+          for: pressStartedRecording ? .recording : phase,
           enabled: model.settings.showRecordingOverlay
         )
         updateStatusItem(for: phase)
         hotkey.setSessionControlsActive(
-          phase == .recording || phase == .connecting || phase == .finishing
+          pressStartedRecording
+            || phase == .recording
+            || phase == .connecting
+            || phase == .finishing
         )
-        if !phase.isBusy {
-          pressStartedRecording = false
+        if !phase.isBusy, !pressStartedRecording {
           liveKind = .unclassified
         }
       }

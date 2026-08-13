@@ -53,6 +53,9 @@ final class RecordingCoordinator: ObservableObject {
   /// a later press already asked to stop.
   private var takeID = 0
   private var latency: TakeLatencyTrace?
+  /// Created on key-down so overlay marks belong to the next take, not a
+  /// finishing take we are about to hand off.
+  private var nextTakeTrace: TakeLatencyTrace?
 
   init(
     settings: SettingsStore,
@@ -73,12 +76,12 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func noteHotkeyPress() {
-    latency = TakeLatencyTrace()
-    latency?.mark("hotkey")
+    nextTakeTrace = TakeLatencyTrace()
+    nextTakeTrace?.mark("hotkey")
   }
 
   func markLatency(_ name: String) {
-    latency?.mark(name)
+    (nextTakeTrace ?? latency)?.mark(name)
   }
 
   private func finishLatency(_ reason: String) {
@@ -90,20 +93,20 @@ final class RecordingCoordinator: ObservableObject {
 
   func start() async {
     if phase == .finishing {
-      await recoverToIdle()
+      await detachFinishingTake()
     }
     guard !phase.isBusy else { return }
     if stopRequestedWhileStarting {
       stopRequestedWhileStarting = false
       finishLatency("aborted_before_start")
+      nextTakeTrace = nil
       return
     }
 
     takeID += 1
     let id = takeID
-    if latency == nil {
-      latency = TakeLatencyTrace()
-    }
+    latency = nextTakeTrace ?? TakeLatencyTrace()
+    nextTakeTrace = nil
     latency?.mark("start")
 
     // Paint live UI first. Never run AppleScript / engine.start / TLS on the
@@ -404,6 +407,7 @@ final class RecordingCoordinator: ObservableObject {
     )
     audioContinuation = streamPair.continuation
     let trace = latency
+    let captureTakeID = takeID
 
     try await audioCapture.start(
       recordingURL: recordingURL,
@@ -445,12 +449,12 @@ final class RecordingCoordinator: ObservableObject {
         if needsConnect {
           try await client.connect(configuration: configuration) {
             [weak self] event in
-            self?.handle(event)
+            self?.handle(event, take: captureTakeID)
           }
           trace?.mark("socket_ready")
         } else {
           await client.setEventHandler { [weak self] event in
-            self?.handle(event)
+            self?.handle(event, take: captureTakeID)
           }
           Task.detached {
             try? await client.refreshSession(configuration: configuration)
@@ -470,7 +474,8 @@ final class RecordingCoordinator: ObservableObject {
         return
       } catch {
         await MainActor.run { [weak self] in
-          self?.handleLiveStreamFailure(error.localizedDescription)
+          guard let self, self.takeID == captureTakeID else { return }
+          self.handleLiveStreamFailure(error.localizedDescription)
         }
       }
     }
@@ -650,7 +655,8 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
-  private func handle(_ event: TranscriptionClientEvent) {
+  private func handle(_ event: TranscriptionClientEvent, take: Int) {
+    guard take == takeID else { return }
     switch event {
     case .sessionReady:
       latency?.mark("session_ready")
@@ -665,7 +671,7 @@ final class RecordingCoordinator: ObservableObject {
       latency?.mark("completed")
       liveDraft.applyCompleted(transcript)
       Task {
-        await finalize(transcript: transcript)
+        await self.finalize(transcript: transcript, take: take)
       }
 
     case .error(let message):
@@ -697,7 +703,8 @@ final class RecordingCoordinator: ObservableObject {
     partialTranscript = snapshot.display
   }
 
-  private func finalize(transcript: String) async {
+  private func finalize(transcript: String, take: Int? = nil) async {
+    if let take, take != takeID { return }
     guard !didFinalizeCurrentRecording else { return }
     didFinalizeCurrentRecording = true
     finishTimeoutTask?.cancel()
@@ -916,6 +923,19 @@ final class RecordingCoordinator: ObservableObject {
 
   private func transcribePreservedRecording() async -> String? {
     guard let recordingURL, recordingFileHasAudio() else { return nil }
+    return await transcribeRecording(
+      at: recordingURL,
+      target: targetApplication,
+      trace: latency
+    )
+  }
+
+  private func transcribeRecording(
+    at url: URL,
+    target: TargetApplication?,
+    trace: TakeLatencyTrace?
+  ) async -> String? {
+    guard HistoryStore.hasPreservableAudio(at: url) else { return nil }
     let apiKey: String
     do {
       apiKey = try settings.loadAPIKey()
@@ -925,11 +945,11 @@ final class RecordingCoordinator: ObservableObject {
     guard !apiKey.isEmpty else { return nil }
 
     var configuration = settings.transcriptionConfiguration
-    configuration.targetAppName = targetApplication?.name
+    configuration.targetAppName = target?.name
     do {
-      latency?.mark("file_transcribe")
+      trace?.mark("file_transcribe")
       return try await FileTranscriptionService.transcribe(
-        audioURL: recordingURL,
+        audioURL: url,
         apiKey: apiKey,
         prompt: configuration.prompt,
         languages: configuration.languages
@@ -973,6 +993,128 @@ final class RecordingCoordinator: ObservableObject {
   private func recordingFileHasAudio() -> Bool {
     guard let recordingURL else { return false }
     return HistoryStore.hasPreservableAudio(at: recordingURL)
+  }
+
+  /// The previous take is still committing/pasting. Peel it off so a new
+  /// press can open the mic immediately instead of playing another stop.
+  private func detachFinishingTake() async {
+    takeID += 1
+    finishTimeoutTask?.cancel()
+    finishTimeoutTask = nil
+    elapsedTask?.cancel()
+    elapsedTask = nil
+    listenStartedAt = nil
+    stopRequestedWhileStarting = false
+    isClosingTake = false
+    isHandsFreeLocked = false
+
+    let take = DetachedTake(
+      recordingURL: recordingURL,
+      transcript: partialTranscript,
+      startedAt: startedAt,
+      targetApplication: targetApplication,
+      latency: latency,
+      client: client
+    )
+    latency?.note("handoff", "1")
+    latency = nil
+    client = nil
+    audioContinuation?.finish()
+    audioContinuation = nil
+    audioSendTask?.cancel()
+    audioSendTask = nil
+    didFinalizeCurrentRecording = true
+    recordingURL = nil
+    startedAt = nil
+    targetApplication = nil
+    usesBatchTranscription = false
+    liveStreamDetached = false
+    liveDraft.reset()
+    phase = .idle
+
+    Task { [weak self] in
+      await self?.deliverDetachedTake(take)
+    }
+  }
+
+  private func deliverDetachedTake(_ take: DetachedTake) async {
+    let client = take.client
+    Task {
+      await client?.disconnect()
+    }
+
+    var text = take.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let url = take.recordingURL,
+      HistoryStore.hasPreservableAudio(at: url),
+      let recovered = await transcribeRecording(
+        at: url,
+        target: take.targetApplication,
+        trace: take.latency
+      )
+    {
+      let recoveredText = recovered.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !recoveredText.isEmpty {
+        text = recoveredText
+      }
+    }
+
+    guard let recordingURL = take.recordingURL else {
+      take.latency?.note("end", "abandon")
+      if let latency = take.latency {
+        LatencyLog.write(latency.finish())
+      }
+      return
+    }
+
+    if text.isEmpty {
+      if HistoryStore.hasPreservableAudio(at: recordingURL) {
+        let duration = max(0, Date().timeIntervalSince(take.startedAt ?? Date()))
+        let entry = HistoryEntry(
+          id: UUID(),
+          createdAt: Date(),
+          transcript: "",
+          duration: duration,
+          audioFileName: recordingURL.lastPathComponent,
+          targetApplication: take.targetApplication,
+          deliveryOutcome: .audioSaved
+        )
+        history.add(entry)
+        onHistoryEntryCreated?(entry.id)
+        take.latency?.note("end", "failed")
+      } else {
+        take.latency?.note("end", "abandon")
+      }
+      if let latency = take.latency {
+        LatencyLog.write(latency.finish())
+      }
+      return
+    }
+
+    take.latency?.mark("completed")
+    take.latency?.mark("paste")
+    var outcome = await delivery.deliver(text, to: take.targetApplication)
+    if outcome == .copiedNoAccessibility {
+      if await permissions.ensureAccessibilityForPaste() {
+        outcome = await delivery.deliver(text, to: take.targetApplication)
+      }
+    }
+    let duration = max(0, Date().timeIntervalSince(take.startedAt ?? Date()))
+    let entry = HistoryEntry(
+      id: UUID(),
+      createdAt: Date(),
+      transcript: text,
+      duration: duration,
+      audioFileName: recordingURL.lastPathComponent,
+      targetApplication: take.targetApplication,
+      deliveryOutcome: outcome
+    )
+    history.add(entry)
+    onHistoryEntryCreated?(entry.id)
+    take.latency?.mark("pasted")
+    take.latency?.note("end", "delivered")
+    if let latency = take.latency {
+      LatencyLog.write(latency.finish())
+    }
   }
 
   /// Drop a hung `.finishing` take so the next `start()` can run.
@@ -1120,4 +1262,13 @@ final class RecordingCoordinator: ObservableObject {
     liveStreamDetached = false
     isClosingTake = false
   }
+}
+
+private struct DetachedTake {
+  var recordingURL: URL?
+  var transcript: String
+  var startedAt: Date?
+  var targetApplication: TargetApplication?
+  var latency: TakeLatencyTrace?
+  var client: (any TranscriptionClient)?
 }
