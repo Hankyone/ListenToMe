@@ -1,3 +1,8 @@
+## ListenToMe 0.3.56
+
+- Tall overlay keeps the newest transcript lines in view and leaves the waveform centered while you talk.
+- Paste skips the activate wait when the target app is already frontmost. Media pause skips apps that are not running. Stop waits less for a live transcript that is already on screen.
+
 ## ListenToMe 0.3.55
 
 - Setup and the menu bar now show the installed version next to Check for Updates.

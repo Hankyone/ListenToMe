@@ -15,7 +15,7 @@ struct RecordingOverlayView: View {
   }
 
   var body: some View {
-    HStack(alignment: layout == .tall ? .top : .center, spacing: 10) {
+    HStack(alignment: .center, spacing: 10) {
       Group {
         if coordinator.phase == .connecting {
           ConnectingWaveform(barWidth: 2)
@@ -29,20 +29,15 @@ struct RecordingOverlayView: View {
         }
       }
       .frame(width: 40, height: 20)
-      .padding(.top, layout == .tall ? 2 : 0)
 
       VStack(alignment: .leading, spacing: 2) {
-        transcriptLine
-          .font(.system(size: 12))
-          .lineLimit(layout.lineLimit)
-          .truncationMode(.head)
-          .frame(maxWidth: .infinity, alignment: .leading)
-
+        liveTranscriptScroll
         Text(trailingHint)
           .font(.system(size: 9, weight: .medium, design: .monospaced))
           .foregroundStyle(AppTheme.faintText)
           .lineLimit(1)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
       TimelineView(.periodic(from: .now, by: 0.1)) { context in
         Text(timeText(at: context.date))
@@ -53,13 +48,13 @@ struct RecordingOverlayView: View {
           )
           .frame(minWidth: 34, alignment: .trailing)
       }
-      .padding(.top, layout == .tall ? 2 : 0)
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 9)
     .frame(
       width: panelSize.width,
-      height: panelSize.height
+      height: panelSize.height,
+      alignment: .center
     )
     .background(
       ChamferedPlate(cut: 9)
@@ -102,6 +97,39 @@ struct RecordingOverlayView: View {
     case .delivered(let outcome): outcome.title
     case .failed: coordinator.errorMessage ?? "Audio saved"
     case .idle: "Ready"
+    }
+  }
+
+  /// Newest lines stay in view. SwiftUI `truncationMode(.head)` on stacked
+  /// `Text` rewrites the last line and leaves the earlier ones stuck.
+  private var liveTranscriptScroll: some View {
+    ScrollViewReader { proxy in
+      ScrollView(.vertical, showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 0) {
+          transcriptLine
+            .font(.system(size: 12))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+          Color.clear
+            .frame(height: 1)
+            .id("live-tail")
+        }
+      }
+      .scrollBounceBehavior(.basedOnSize)
+      .allowsHitTesting(false)
+      .onChange(of: coordinator.partialTranscript) { _, _ in
+        scrollLiveTranscriptToEnd(proxy)
+      }
+      .onAppear {
+        scrollLiveTranscriptToEnd(proxy)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  private func scrollLiveTranscriptToEnd(_ proxy: ScrollViewProxy) {
+    Task { @MainActor in
+      proxy.scrollTo("live-tail", anchor: .bottom)
     }
   }
 

@@ -40,14 +40,18 @@ final class TextDeliveryService {
       return attempt
     }
 
-    // Bring the original app forward before synthesizing keys.
-    _ = activate(target)
-    try? await Task.sleep(nanoseconds: 100_000_000)
-    for _ in 0..<5 {
-      let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-      if frontmostPID == target.processIdentifier { break }
+    let alreadyFront =
+      NSWorkspace.shared.frontmostApplication?.processIdentifier
+      == target.processIdentifier
+    if !alreadyFront {
       _ = activate(target)
-      try? await Task.sleep(nanoseconds: 60_000_000)
+      try? await Task.sleep(nanoseconds: 80_000_000)
+      for _ in 0..<3 {
+        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if frontmostPID == target.processIdentifier { break }
+        _ = activate(target)
+        try? await Task.sleep(nanoseconds: 40_000_000)
+      }
     }
 
     let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -68,10 +72,11 @@ final class TextDeliveryService {
       return .copiedPasteFailed
     }
 
-    // VoiceInk pre-paste settle  -  Electron needs a beat after activate().
-    let settleNs: UInt64 =
-      isChromiumHost(target) || isTerminalHost(target) ? 180_000_000 : 100_000_000
-    try? await Task.sleep(nanoseconds: settleNs)
+    if !alreadyFront {
+      let settleNs: UInt64 =
+        isChromiumHost(target) || isTerminalHost(target) ? 120_000_000 : 60_000_000
+      try? await Task.sleep(nanoseconds: settleNs)
+    }
 
     // Cmd+V is the real delivery path (VoiceInk CursorPaster). Always attempt
     // it  -  never trust AX selectedText success on Electron first.

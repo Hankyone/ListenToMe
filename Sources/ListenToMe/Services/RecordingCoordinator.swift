@@ -351,7 +351,7 @@ final class RecordingCoordinator: ObservableObject {
     // after release when we already have live text.
     let hasLiveText =
       !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let timeoutNs: UInt64 = hasLiveText ? 2_500_000_000 : 12_000_000_000
+    let timeoutNs: UInt64 = hasLiveText ? 800_000_000 : 12_000_000_000
     finishTimeoutTask?.cancel()
     let session = sessionTakeID
     finishTimeoutTask = Task { [weak self] in

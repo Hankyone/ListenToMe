@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Pauses common media apps and mutes system output while dictating, then
@@ -64,14 +65,10 @@ final class MediaPauseService: @unchecked Sendable {
   }
 
   private func pausePlayingMediaApps() -> [String] {
-    let candidates = ["Music", "Spotify", "TV", "QuickTime Player"]
     var paused: [String] = []
-    for app in candidates {
+    for app in Self.mediaApps where isRunning(bundleID: app.bundleID) {
       let script = """
-        tell application "System Events"
-          if not (exists process "\(app)") then return "idle"
-        end tell
-        tell application "\(app)"
+        tell application "\(app.name)"
           try
             if player state is playing then
               pause
@@ -84,17 +81,29 @@ final class MediaPauseService: @unchecked Sendable {
       if runOSASCRIPT(script)?.trimmingCharacters(in: .whitespacesAndNewlines)
         == "paused"
       {
-        paused.append(app)
+        paused.append(app.name)
       }
     }
     return paused
   }
 
+  private func isRunning(bundleID: String) -> Bool {
+    NSWorkspace.shared.runningApplications.contains {
+      $0.bundleIdentifier == bundleID
+    }
+  }
+
+  private static let mediaApps: [(name: String, bundleID: String)] = [
+    ("Music", "com.apple.Music"),
+    ("Spotify", "com.spotify.client"),
+    ("TV", "com.apple.TV"),
+    ("QuickTime Player", "com.apple.QuickTimePlayerX"),
+  ]
+
   private func resumeMediaApp(_ app: String) {
+    let bundleID = Self.mediaApps.first { $0.name == app }?.bundleID
+    if let bundleID, !isRunning(bundleID: bundleID) { return }
     let script = """
-      tell application "System Events"
-        if not (exists process "\(app)") then return
-      end tell
       tell application "\(app)"
         try
           play
