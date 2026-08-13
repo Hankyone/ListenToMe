@@ -79,6 +79,10 @@ final class RecordingCoordinator: ObservableObject {
       await recoverToIdle()
     }
     guard !phase.isBusy else { return }
+    if stopRequestedWhileStarting {
+      stopRequestedWhileStarting = false
+      return
+    }
 
     takeID += 1
     let id = takeID
@@ -214,20 +218,28 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   /// Stop that is safe to call from the hotkey even while `start()` is still
-  /// opening the microphone. Extra presses bump `takeID` so a late start
-  /// cannot reopen the mic after this stop.
+  /// opening the microphone. A second press always aborts so the overlay
+  /// cannot stick while the websocket is still coming up.
   func requestStop() async {
-    if phase == .recording {
-      // Live path isn't up yet — finish this take after start() connects,
-      // instead of discarding speech that already happened.
-      if audioSendTask == nil {
-        stopRequestedWhileStarting = true
-        return
-      }
+    switch RecordingStopPolicy.decision(
+      phase: phase,
+      hasAudioSendTask: audioSendTask != nil,
+      isMicRecording: audioCapture.isRecording,
+      alreadyRequestedStop: stopRequestedWhileStarting
+    ) {
+    case .markStopBeforeStart:
+      stopRequestedWhileStarting = true
+    case .finishAfterConnect:
+      stopRequestedWhileStarting = true
+    case .finishLive:
       takeID += 1
       await stop()
-    } else if phase == .connecting {
+    case .abort:
       stopRequestedWhileStarting = true
+      takeID += 1
+      await abortIncompleteStart()
+    case .recoverFinishing:
+      await recoverToIdle()
     }
   }
 
@@ -925,7 +937,9 @@ final class RecordingCoordinator: ObservableObject {
   /// `start()` lost the race to a later stop/press. Drop the half-open take
   /// so the hotkey is not stuck in `.recording`.
   private func abortIncompleteStart() async {
-    guard phase == .recording, !didFinalizeCurrentRecording else { return }
+    guard phase == .recording || phase == .connecting,
+      !didFinalizeCurrentRecording
+    else { return }
     mediaPause.end()
     elapsedTask?.cancel()
     elapsedTask = nil

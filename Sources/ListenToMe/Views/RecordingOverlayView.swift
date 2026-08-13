@@ -4,6 +4,7 @@ import SwiftUI
 struct RecordingOverlayView: View {
   @ObservedObject var coordinator: RecordingCoordinator
   @ObservedObject var settings: SettingsStore
+  var onDismiss: (() -> Void)?
 
   private var layout: OverlayLayout { settings.overlayLayout }
   private var panelSize: CGSize { layout.panelSize }
@@ -84,6 +85,10 @@ struct RecordingOverlayView: View {
     .padding(.bottom, 8)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(statusLine)
+    .onTapGesture {
+      coordinator.cancelDictation()
+      onDismiss?()
+    }
   }
 
   private var statusLine: String {

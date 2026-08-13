@@ -1,3 +1,3 @@
-## ListenToMe 0.3.47
+## ListenToMe 0.3.48
 
-- Writing guidance no longer assumes English or tells the model how to transcribe; factory default is empty, and spoken revisions include French cues (annule, je veux dire)
+- The listening plate can no longer stick on screen: a second hotkey press, Escape, or a click on the plate always dismisses it, including while a take is still starting or finishing

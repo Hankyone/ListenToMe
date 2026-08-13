@@ -34,7 +34,10 @@ final class RecordingPanelController {
     panel.contentView = NSHostingView(
       rootView: RecordingOverlayView(
         coordinator: coordinator,
-        settings: settings
+        settings: settings,
+        onDismiss: { [panel] in
+          panel.orderOut(nil)
+        }
       )
     )
   }
@@ -61,7 +64,7 @@ final class RecordingPanelController {
       return
     }
     switch phase {
-    case .connecting, .recording, .finishing:
+    case .connecting, .recording:
       show()
     case .failed:
       show()
@@ -70,7 +73,7 @@ final class RecordingPanelController {
         guard !Task.isCancelled else { return }
         self?.panel.orderOut(nil)
       }
-    case .delivered, .idle:
+    case .finishing, .delivered, .idle:
       panel.orderOut(nil)
     }
   }

@@ -41,14 +41,80 @@ final class HotkeyTakePolicyTests: XCTestCase {
     )
   }
 
-  func testFinishingPressStartsANewTake() {
+  func testFinishingPressStopsTheTake() {
     XCTAssertEqual(
       HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: false),
-      .start
+      .stop
     )
     XCTAssertEqual(
       HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: true),
-      .start
+      .stop
+    )
+  }
+
+  func testStopBeforeStartMarksTheFlag() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .idle,
+        hasAudioSendTask: false,
+        isMicRecording: false,
+        alreadyRequestedStop: false
+      ),
+      .markStopBeforeStart
+    )
+  }
+
+  func testFirstStopWhileMicIsUpWaitsToFinish() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: false,
+        isMicRecording: true,
+        alreadyRequestedStop: false
+      ),
+      .finishAfterConnect
+    )
+  }
+
+  func testSecondStopAbortsAStuckStartup() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: false,
+        isMicRecording: true,
+        alreadyRequestedStop: true
+      ),
+      .abort
+    )
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: false,
+        isMicRecording: false,
+        alreadyRequestedStop: false
+      ),
+      .abort
+    )
+  }
+
+  func testLiveStopFinishesAndFinishingRecovers() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: true,
+        isMicRecording: true,
+        alreadyRequestedStop: false
+      ),
+      .finishLive
+    )
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .finishing,
+        hasAudioSendTask: true,
+        isMicRecording: false,
+        alreadyRequestedStop: false
+      ),
+      .recoverFinishing
     )
   }
 }

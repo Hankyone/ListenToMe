@@ -99,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     hotkey.onCancel = { [weak self] in
       guard let self else { return }
+      self.overlayController?.update(for: .idle, enabled: true)
       // After Space-lock, Esc means "I'm done" (paste), not discard.
       if self.model.recording.isHandsFreeLocked,
         self.model.recording.phase == .recording
@@ -217,16 +218,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.settings.spaceLocksHandsFree
         && !model.settings.hotkey.usesSpaceKey
       hotkey.setSpaceLockArmed(canSpaceLock)
-      Task {
-        await model.recording.start()
+      Task { [weak self] in
+        guard let self else { return }
+        await self.model.recording.start()
+        // start() can return without changing phase (stop won the race).
+        // Re-apply overlay from the real phase so the plate cannot stick.
+        if !self.model.recording.phase.isBusy {
+          self.overlayController?.update(
+            for: self.model.recording.phase,
+            enabled: self.model.settings.showRecordingOverlay
+          )
+        }
       }
     case .stop:
       // Second press always finishes — including after Space-lock.
       pressStartedRecording = false
       hotkey.setSpaceLockArmed(false)
       playStopCueIfEnabled()
-      Task {
-        await model.recording.requestStop()
+      overlayController?.update(for: .idle, enabled: true)
+      Task { [weak self] in
+        await self?.model.recording.requestStop()
       }
     }
   }
@@ -288,6 +299,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return
       }
       await self.model.recording.requestStop()
+      if !self.model.recording.phase.isBusy {
+        self.overlayController?.update(
+          for: self.model.recording.phase,
+          enabled: self.model.settings.showRecordingOverlay
+        )
+      }
     }
   }
 
@@ -585,7 +602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         updateStatusItem(for: phase)
         hotkey.setSessionControlsActive(
-          phase == .recording || phase == .connecting
+          phase == .recording || phase == .connecting || phase == .finishing
         )
         if !phase.isBusy {
           pressStartedRecording = false
