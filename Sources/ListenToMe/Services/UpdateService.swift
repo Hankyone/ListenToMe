@@ -26,6 +26,11 @@ final class UpdateService: NSObject, NSMenuItemValidation {
     updaterController.startUpdater()
   }
 
+  static var shortVersion: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? ""
+  }
+
   /// User-initiated check. No-ops if a session is already on screen so we
   /// never ask Sparkle to order its window forward a second time.
   @objc func checkForUpdates(_ sender: Any?) {

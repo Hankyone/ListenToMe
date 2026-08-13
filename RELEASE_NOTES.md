@@ -1,3 +1,7 @@
+## ListenToMe 0.3.55
+
+- Setup and the menu bar now show the installed version next to Check for Updates.
+
 ## ListenToMe 0.3.54
 
 - Stop pasting the session prompt when a short take is re-pressed. Keep the next take recording instead of tearing it down mid-start.

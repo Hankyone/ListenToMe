@@ -439,6 +439,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
     about.target = NSApplication.shared
 
+    let versionItem = applicationMenu.addItem(
+      withTitle: "ListenToMe \(UpdateService.shortVersion)",
+      action: nil,
+      keyEquivalent: ""
+    )
+    versionItem.isEnabled = false
     let checkForUpdates = applicationMenu.addItem(
       withTitle: "Check for Updates…",
       action: #selector(UpdateService.checkForUpdates(_:)),
@@ -558,6 +564,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       to: menu
     )
     menu.addItem(.separator())
+    let versionItem = menu.addItem(
+      withTitle: "ListenToMe \(UpdateService.shortVersion)",
+      action: nil,
+      keyEquivalent: ""
+    )
+    versionItem.isEnabled = false
     let checkForUpdates = addMenuItem(
       "Check for Updates…",
       symbolName: "arrow.triangle.2.circlepath",

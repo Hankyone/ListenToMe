@@ -195,10 +195,15 @@ struct SettingsContentView: View {
 
   private var updatesSection: some View {
     SettingsSection(title: "Updates") {
-      Button("Check for Updates…") {
-        updates.checkForUpdates(nil)
+      VStack(alignment: .leading, spacing: 12) {
+        Text("ListenToMe \(UpdateService.shortVersion)")
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(AppTheme.secondaryText)
+        Button("Check for Updates…") {
+          updates.checkForUpdates(nil)
+        }
+        .buttonStyle(RecordActionButtonStyle())
       }
-      .buttonStyle(RecordActionButtonStyle())
     }
   }
 
