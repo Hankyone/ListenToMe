@@ -30,6 +30,11 @@ private struct HistoryListView: View {
   @ObservedObject var history: HistoryStore
   @Binding var selectedID: UUID?
   let hotkeyDisplay: String
+  @State private var query = ""
+
+  private var visibleEntries: [HistoryEntry] {
+    HistorySearch.matching(history.entries, query: query)
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -38,7 +43,7 @@ private struct HistoryListView: View {
           .font(.system(size: 24, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
         Spacer()
-        Text("\(history.entries.count)")
+        Text("\(visibleEntries.count)")
           .font(.system(size: 12, weight: .medium, design: .monospaced))
           .foregroundStyle(AppTheme.faintText)
       }
@@ -46,14 +51,30 @@ private struct HistoryListView: View {
       .padding(.top, 20)
       .padding(.bottom, 10)
 
+      if !history.entries.isEmpty {
+        ThemedTextField(
+          placeholder: "Search transcripts",
+          text: $query
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+        .accessibilityLabel("Search transcripts")
+      }
+
       if history.entries.isEmpty {
         EmptyHistoryView(hotkeyDisplay: hotkeyDisplay)
+      } else if visibleEntries.isEmpty {
+        Text("No matching transcripts")
+          .font(.system(size: 13))
+          .foregroundStyle(AppTheme.secondaryText)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .padding(28)
       } else {
         // ScrollView instead of List — system List selection draws a blue
         // rect that bleeds past our chamfered plates.
         ScrollView {
           LazyVStack(spacing: 6) {
-            ForEach(history.entries) { entry in
+            ForEach(visibleEntries) { entry in
               let isSelected = selectedID == entry.id
               HistoryRow(entry: entry)
                 .padding(.horizontal, 10)
@@ -94,7 +115,10 @@ private struct HistoryListView: View {
                   Button("Move Recording to Trash", role: .destructive) {
                     history.remove(id: entry.id)
                     if selectedID == entry.id {
-                      selectedID = history.entries.first?.id
+                      selectedID = HistorySearch.matching(
+                        history.entries,
+                        query: query
+                      ).first?.id
                     }
                   }
                 }
@@ -107,6 +131,13 @@ private struct HistoryListView: View {
       }
     }
     .background(AppTheme.surface)
+    .onChange(of: query) { _, _ in
+      let visibleIDs = Set(visibleEntries.map(\.id))
+      if let selectedID, visibleIDs.contains(selectedID) {
+        return
+      }
+      selectedID = visibleEntries.first?.id
+    }
   }
 }
 
