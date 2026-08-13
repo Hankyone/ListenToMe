@@ -52,6 +52,9 @@ final class RecordingCoordinator: ObservableObject {
   /// Bumped on start/stop so an in-flight `start()` cannot open the mic after
   /// a later press already asked to stop.
   private var takeID = 0
+  /// Identity of the live socket/mic take. Survives `stop()` incrementing
+  /// `takeID`, so the final transcript is not dropped.
+  private var sessionTakeID = 0
   private var latency: TakeLatencyTrace?
   /// Created on key-down so overlay marks belong to the next take, not a
   /// finishing take we are about to hand off.
@@ -298,6 +301,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func stop() async {
+    let generation = takeID
     takeID += 1
     guard phase == .recording else { return }
     latency?.mark("stop")
@@ -317,6 +321,7 @@ final class RecordingCoordinator: ObservableObject {
     if let remainder = await audioCapture.stop() {
       audioContinuation?.yield(remainder)
     }
+    guard sessionTakeID != 0, takeID == generation + 1 else { return }
     latency?.mark("mic_stopped")
     audioContinuation?.finish()
     audioContinuation = nil
@@ -331,9 +336,11 @@ final class RecordingCoordinator: ObservableObject {
       await sendTask.value
       timeout.cancel()
     }
+    guard sessionTakeID != 0, takeID == generation + 1 else { return }
 
     do {
       try await client?.commit()
+      guard sessionTakeID != 0 else { return }
       latency?.mark("commit")
     } catch {
       await finishWithBestAvailableTranscript()
@@ -346,9 +353,13 @@ final class RecordingCoordinator: ObservableObject {
       !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     let timeoutNs: UInt64 = hasLiveText ? 2_500_000_000 : 12_000_000_000
     finishTimeoutTask?.cancel()
+    let session = sessionTakeID
     finishTimeoutTask = Task { [weak self] in
       try? await Task.sleep(nanoseconds: timeoutNs)
-      guard let self, self.phase == .finishing else { return }
+      guard let self,
+        self.sessionTakeID == session,
+        self.phase == .finishing
+      else { return }
       await self.finishWithBestAvailableTranscript()
     }
   }
@@ -408,6 +419,7 @@ final class RecordingCoordinator: ObservableObject {
     audioContinuation = streamPair.continuation
     let trace = latency
     let captureTakeID = takeID
+    sessionTakeID = captureTakeID
 
     try await audioCapture.start(
       recordingURL: recordingURL,
@@ -474,7 +486,7 @@ final class RecordingCoordinator: ObservableObject {
         return
       } catch {
         await MainActor.run { [weak self] in
-          guard let self, self.takeID == captureTakeID else { return }
+          guard let self, self.sessionTakeID == captureTakeID else { return }
           self.handleLiveStreamFailure(error.localizedDescription)
         }
       }
@@ -643,7 +655,7 @@ final class RecordingCoordinator: ObservableObject {
         languages: configuration.languages
       )
       latency?.mark("completed")
-      await finalize(transcript: text)
+      await finalize(transcript: spokenTranscript(text, target: targetApplication))
     } catch {
       if Self.isBenignEmptyTake(error.localizedDescription),
         !recordingFileHasAudio()
@@ -656,7 +668,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func handle(_ event: TranscriptionClientEvent, take: Int) {
-    guard take == takeID else { return }
+    guard take == sessionTakeID else { return }
     switch event {
     case .sessionReady:
       latency?.mark("session_ready")
@@ -704,7 +716,7 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func finalize(transcript: String, take: Int? = nil) async {
-    if let take, take != takeID { return }
+    if let take, take != sessionTakeID { return }
     guard !didFinalizeCurrentRecording else { return }
     didFinalizeCurrentRecording = true
     finishTimeoutTask?.cancel()
@@ -722,7 +734,7 @@ final class RecordingCoordinator: ObservableObject {
       audioSendTask = nil
     }
 
-    let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    let finalText = spokenTranscript(transcript, target: targetApplication)
     guard !finalText.isEmpty, let recordingURL else {
       await recycleOrDropClient()
       if recordingFileHasAudio() {
@@ -921,6 +933,18 @@ final class RecordingCoordinator: ObservableObject {
     prepareForNextTake()
   }
 
+  private func spokenTranscript(
+    _ transcript: String,
+    target: TargetApplication?
+  ) -> String {
+    var configuration = settings.transcriptionConfiguration
+    configuration.targetAppName = target?.name
+    return TranscriptSanitizer.spokenText(
+      from: transcript,
+      prompt: configuration.prompt
+    )
+  }
+
   private func transcribePreservedRecording() async -> String? {
     guard let recordingURL, recordingFileHasAudio() else { return nil }
     return await transcribeRecording(
@@ -999,6 +1023,7 @@ final class RecordingCoordinator: ObservableObject {
   /// press can open the mic immediately instead of playing another stop.
   private func detachFinishingTake() async {
     takeID += 1
+    sessionTakeID = 0
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
     elapsedTask?.cancel()
@@ -1043,8 +1068,11 @@ final class RecordingCoordinator: ObservableObject {
       await client?.disconnect()
     }
 
-    var text = take.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let url = take.recordingURL,
+    var text = spokenTranscript(take.transcript, target: take.targetApplication)
+    let elapsed = take.startedAt.map { Date().timeIntervalSince($0) } ?? 0
+    if text.isEmpty,
+      elapsed >= DictationGesturePolicy.minTranscribeDuration,
+      let url = take.recordingURL,
       HistoryStore.hasPreservableAudio(at: url),
       let recovered = await transcribeRecording(
         at: url,
@@ -1052,10 +1080,7 @@ final class RecordingCoordinator: ObservableObject {
         trace: take.latency
       )
     {
-      let recoveredText = recovered.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !recoveredText.isEmpty {
-        text = recoveredText
-      }
+      text = spokenTranscript(recovered, target: take.targetApplication)
     }
 
     guard let recordingURL = take.recordingURL else {
@@ -1120,6 +1145,7 @@ final class RecordingCoordinator: ObservableObject {
   /// Drop a hung `.finishing` take so the next `start()` can run.
   private func recoverToIdle() async {
     takeID += 1
+    sessionTakeID = 0
     stopRequestedWhileStarting = false
     isClosingTake = false
     finishTimeoutTask?.cancel()
@@ -1156,6 +1182,7 @@ final class RecordingCoordinator: ObservableObject {
     listenStartedAt = nil
     isHandsFreeLocked = false
     stopRequestedWhileStarting = false
+    sessionTakeID = 0
     phase = .idle
     discardCurrentRecording()
     teardownSession()
