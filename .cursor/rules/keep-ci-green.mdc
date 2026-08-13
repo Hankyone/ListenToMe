@@ -12,7 +12,7 @@ The maintainer does not want GitHub Actions failure emails. Treat a red workflow
 1. Run `./Scripts/ci-preflight.sh` and wait for it to pass.
 2. Do not push if preflight fails. Fix locally first.
 3. Do not tag a release until preflight passes on the exact commit you will tag.
-4. Before tagging, update `RELEASE_NOTES.md` so it mentions the exact `CFBundleShortVersionString` (release.sh fails otherwise). Appcast notes are embedded inline as `sparkle:format="markdown"` — do not use HTML descriptions or a separate notes URL (HTML forces a slow WKWebView spinner).
+4. Before tagging, update `RELEASE_NOTES.md` so it mentions the exact `CFBundleShortVersionString` (release.sh fails otherwise). Appcast notes are embedded inline as `sparkle:format="markdown"` from **only that version's section** — do not use HTML descriptions, a separate notes URL, or the full changelog (HTML forces a slow WKWebView spinner).
 
 ## When adding or bumping SPM dependencies
 

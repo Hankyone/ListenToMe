@@ -128,10 +128,12 @@ if ! grep -q "ListenToMe ${VERSION}" "$NOTES_MD"; then
     print -u2 "RELEASE_NOTES.md must mention ListenToMe ${VERSION} before releasing."
     exit 1
 fi
-cp "$NOTES_MD" "$NOTES_RELEASE_MD"
+python3 "$PROJECT_DIR/Scripts/embed-appcast-notes.py" \
+    --extract "$VERSION" "$NOTES_MD" > "$NOTES_RELEASE_MD"
 
 # generate_appcast scans the folder; keep the DMG out so Sparkle only
-# publishes the zip update archive.
+# publishes the zip update archive. embed-appcast-notes.py then keeps
+# only this version's section in the Sparkle alert.
 SPARKLE_DIR="$RELEASE_DIR/sparkle"
 mkdir -p "$SPARKLE_DIR"
 cp "$RELEASE_DIR/$ZIP_NAME" "$SPARKLE_DIR/"

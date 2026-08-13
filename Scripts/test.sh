@@ -11,6 +11,8 @@ fi
 
 cd "$PROJECT_DIR"
 
+python3 "$PROJECT_DIR/Scripts/embed-appcast-notes.py" --self-test
+
 xcrun swift build --build-tests
 
 # SIP strips DYLD_* for the test helper, so place Sparkle where the bundle
