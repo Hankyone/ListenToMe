@@ -65,28 +65,26 @@ final class VocabularyTests: XCTestCase {
     let configuration = TranscriptionConfiguration(
       basePrompt: "Keep the speaker's meaning.",
       vocabulary: [],
-      languages: ["en"],
+      languages: ["en", "fr"],
       delay: .low
     )
 
     XCTAssertTrue(configuration.prompt.contains("correction"))
     XCTAssertTrue(configuration.prompt.contains("scratch that"))
     XCTAssertTrue(configuration.prompt.contains("I mean"))
+    XCTAssertTrue(configuration.prompt.contains("annule"))
+    XCTAssertTrue(configuration.prompt.contains("je veux dire"))
     XCTAssertTrue(configuration.prompt.contains("restatement"))
-    XCTAssertTrue(configuration.prompt.contains("omit the cue"))
+    XCTAssertTrue(configuration.prompt.contains("drop the cue"))
   }
 
-  func testDefaultBasePromptSpecifiesWrittenFormNotALecture() {
-    let prompt = WritingGuidance.defaultBasePrompt.lowercased()
-    XCTAssertTrue(prompt.contains("punctuation"))
-    XCTAssertTrue(prompt.contains("caret"))
-    XCTAssertTrue(prompt.contains("homophones") || prompt.contains("destination"))
-    XCTAssertTrue(prompt.contains("trailing space"))
-    XCTAssertTrue(prompt.contains("keep like"))
-    XCTAssertTrue(prompt.contains("user@host"))
-    XCTAssertFalse(prompt.contains("don't invent"))
-    XCTAssertFalse(prompt.contains("do not invent"))
-    XCTAssertFalse(prompt.contains("unspoken"))
+  func testDefaultBasePromptDoesNotLectureTheModel() {
+    XCTAssertTrue(WritingGuidance.defaultBasePrompt.isEmpty)
+    XCTAssertTrue(
+      WritingGuidance.isFactoryDefault(
+        "One speaker, live, inserting at the caret. Written English at the insertion point: sentence case; standard punctuation; Arabic numerals (42, 3.14, 1,000) unless the words themselves are the content; emails, URLs, and paths as user@host and https://..., not spoken at/dot/slash. Drop um, uh, er; keep like, you know, so, well when they belong in the sentence. Keep wording, order, and register. Homophones follow the destination app and listed spellings. End with one trailing space, never a newline."
+      )
+    )
   }
 
   func testPromptStaysWithinRealtimeCharacterLimitForLongAppNames() {

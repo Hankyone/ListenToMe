@@ -240,15 +240,16 @@ enum OpenAIService {
 }
 
 enum WritingGuidance {
-  static let defaultBasePrompt = """
-    One speaker, live, inserting at the caret. Written English at the insertion point: sentence case; standard punctuation; Arabic numerals (42, 3.14, 1,000) unless the words themselves are the content; emails, URLs, and paths as user@host and https://..., not spoken at/dot/slash. Drop um, uh, er; keep like, you know, so, well when they belong in the sentence. Keep wording, order, and register. Homophones follow the destination app and listed spellings. End with one trailing space, never a newline.
-    """
-    .trimmingCharacters(in: .whitespacesAndNewlines)
+  /// Empty on purpose. The live model already knows how to transcribe;
+  /// language comes from Expected languages, not this field. Destination,
+  /// custom spellings, spoken revisions, and trailing space are appended
+  /// separately. Users can add their own notes here if they want.
+  static let defaultBasePrompt = ""
 
-  /// Spoken "scratch that" / "I mean" so the model rewrites instead of
-  /// transcribing the cue words. Always appended; not user-editable.
+  /// Spoken revisions so the model rewrites instead of transcribing the
+  /// cue. Always appended; not user-editable.
   static let correctionPrompt = """
-    Spoken revision — correction, scratch that, or I mean: emit only the restatement of the immediately preceding phrase; omit the cue and the discarded span.
+    correction / scratch that / I mean / annule / je veux dire → keep the restatement, drop the cue. End with one trailing space, never a newline.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -264,6 +265,10 @@ enum WritingGuidance {
     .trimmingCharacters(in: .whitespacesAndNewlines),
     """
     Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, you know). Prefer listed spellings. If typing in place, end with one space.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+    """
+    One speaker, live, inserting at the caret. Written English at the insertion point: sentence case; standard punctuation; Arabic numerals (42, 3.14, 1,000) unless the words themselves are the content; emails, URLs, and paths as user@host and https://..., not spoken at/dot/slash. Drop um, uh, er; keep like, you know, so, well when they belong in the sentence. Keep wording, order, and register. Homophones follow the destination app and listed spellings. End with one trailing space, never a newline.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines),
   ]

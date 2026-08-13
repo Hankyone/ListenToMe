@@ -1,3 +1,3 @@
-## ListenToMe 0.3.46
+## ListenToMe 0.3.47
 
-- Writing guidance now specifies the written form (numbers, emails, filler vs like, homophones, trailing space) instead of telling the model not to invent
+- Writing guidance no longer assumes English or tells the model how to transcribe; factory default is empty, and spoken revisions include French cues (annule, je veux dire)
