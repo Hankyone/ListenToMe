@@ -102,9 +102,9 @@ struct HotkeyRecorderView: View {
       return hint
     }
     if settings.isCapturingHotkey {
-      return "Press a key combination, or press and release one modifier alone, like Right ⌘ or Globe. Esc or Space keeps the current shortcut."
+      return "Press a key combo, or one modifier like Right ⌘. Esc or Space keeps the current shortcut."
     }
-    return "Behaviors for this shortcut are below — tap, hold, and Space lock."
+    return "Click the keycap to change the shortcut."
   }
 
   private func beginCapture() {

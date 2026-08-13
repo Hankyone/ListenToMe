@@ -46,7 +46,7 @@ struct APIKeyStore {
     }
   }
 
-  /// Whether a key file exists — does not read the secret.
+  /// Whether a key file exists  -  does not read the secret.
   func hasStoredKey() -> Bool {
     guard let url = try? fileURL() else { return false }
     return fileManager.fileExists(atPath: url.path)

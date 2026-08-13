@@ -5,7 +5,7 @@ import Foundation
 /// Delivers a transcript into the user's focused field.
 ///
 /// Primary path matches VoiceInk `CursorPaster` and Handy: clipboard + Cmd+V.
-/// We deliberately do **not** trust AX `kAXSelectedText` success alone — Electron
+/// We deliberately do **not** trust AX `kAXSelectedText` success alone  -  Electron
 /// apps (Cursor, T3 Code, VS Code, Slack, …) often report success while the
 /// webview never receives the text, which made history say "Pasted" with an
 /// empty field.
@@ -68,13 +68,13 @@ final class TextDeliveryService {
       return .copiedPasteFailed
     }
 
-    // VoiceInk pre-paste settle — Electron needs a beat after activate().
+    // VoiceInk pre-paste settle  -  Electron needs a beat after activate().
     let settleNs: UInt64 =
       isChromiumHost(target) || isTerminalHost(target) ? 180_000_000 : 100_000_000
     try? await Task.sleep(nanoseconds: settleNs)
 
     // Cmd+V is the real delivery path (VoiceInk CursorPaster). Always attempt
-    // it — never trust AX selectedText success on Electron first.
+    // it  -  never trust AX selectedText success on Electron first.
     // GPU terminals (Ghostty, kitty, …) often ignore HID Cmd+V; System Events
     // keystrokes land in the shell when HID does not.
     var pasted = false
@@ -153,7 +153,7 @@ final class TextDeliveryService {
     return true
   }
 
-  /// AX insert with read-back verification. Unverified success is ignored —
+  /// AX insert with read-back verification. Unverified success is ignored  - 
   /// that was the Electron false-positive that marked takes as Pasted.
   private func insertTextViaAccessibilityVerified(_ text: String) -> Bool {
     guard PermissionService.isAccessibilityTrusted() else { return false }
@@ -214,11 +214,11 @@ final class TextDeliveryService {
       return true
     }
 
-    // selectedText without verification is how Electron fooled us — skip it.
+    // selectedText without verification is how Electron fooled us  -  skip it.
     return false
   }
 
-  /// Cmd+V via CGEvent — VoiceInk `CursorPaster` (privateState + hid tap).
+  /// Cmd+V via CGEvent  -  VoiceInk `CursorPaster` (privateState + hid tap).
   private func postPasteShortcut() async -> Bool {
     guard PermissionService.isAccessibilityTrusted() else { return false }
 

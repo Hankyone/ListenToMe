@@ -35,7 +35,7 @@ final class LiveTranscriptDraft {
         tentative: String(buffer.dropFirst(committed.count))
       )
     }
-    // Stream diverged from the frozen prefix — show the live buffer as tentative.
+    // Stream diverged from the frozen prefix  -  show the live buffer as tentative.
     return LiveTranscriptSnapshot(committed: committed, tentative: buffer)
   }
 

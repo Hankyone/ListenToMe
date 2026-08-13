@@ -63,7 +63,7 @@ final class PermissionService: ObservableObject {
   }
 
   /// Prompt (once per launch) and open the Accessibility pane.
-  /// Returns immediately after prompting — never sleep on the hotkey path.
+  /// Returns immediately after prompting  -  never sleep on the hotkey path.
   @discardableResult
   func ensureAccessibilityForPaste(promptIfNeeded: Bool = true) async -> Bool {
     refresh()
@@ -96,7 +96,7 @@ final class PermissionService: ObservableObject {
 
   private func observeAccessibilityAPIChanges() {
     // Fires when any app's Accessibility toggle changes. The trust bit is
-    // briefly stale if read in the notification handler — recheck after delays.
+    // briefly stale if read in the notification handler  -  recheck after delays.
     accessibilityChangeObserver = DistributedNotificationCenter.default()
       .addObserver(
         forName: Notification.Name("com.apple.accessibility.api"),

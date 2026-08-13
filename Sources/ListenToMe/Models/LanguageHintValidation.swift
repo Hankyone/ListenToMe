@@ -2,7 +2,7 @@ import Foundation
 
 /// OpenAI transcription language hints: ISO 639-1 (`fr`), selected ISO 639-3
 /// (`yue`, `cmn`, …), and regional Chinese locales (`zh-cn`). Regional tags like
-/// `fr-CA` are rejected by the API — we normalize those to the base language.
+/// `fr-CA` are rejected by the API  -  we normalize those to the base language.
 enum LanguageHintValidation {
   struct Result: Equatable, Sendable {
     /// Rewritten field text (regional codes collapsed, tokens re-joined).
@@ -11,7 +11,7 @@ enum LanguageHintValidation {
     var codes: [String]
     /// Short status for Setup (nil when the field is fine as-is).
     var message: String?
-    /// True when something in the field cannot be used — block dictation.
+    /// True when something in the field cannot be used  -  block dictation.
     var isBlocking: Bool
   }
 
@@ -57,7 +57,7 @@ enum LanguageHintValidation {
           displayTokens.append(token)
           invalid.append(token)
         } else {
-          // Still typing a regional tag — keep the text, don't send it yet.
+          // Still typing a regional tag  -  keep the text, don't send it yet.
           displayTokens.append(token)
         }
       case .invalid(let token):
@@ -121,7 +121,7 @@ enum LanguageHintValidation {
       return .corrected(from: token, to: base)
     }
 
-    // Incomplete regional while typing ("fr-", "fr-c") — don't flash errors yet.
+    // Incomplete regional while typing ("fr-", "fr-c")  -  don't flash errors yet.
     if matches(token, pattern: #"^[a-z]{2}-[a-z0-9]{0,1}$"#) {
       return .pending(token)
     }

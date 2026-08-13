@@ -19,11 +19,6 @@ struct SettingsContentView: View {
           Text("One model. Your words.")
             .font(.system(size: 28, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
-          Text(
-            "Your own API key, light polish, and a history you can replay or reprocess."
-          )
-          .font(.system(size: 13))
-          .foregroundStyle(AppTheme.secondaryText)
         }
 
         keySection
@@ -38,7 +33,7 @@ struct SettingsContentView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(AppTheme.background)
     .onAppear {
-      // Field stays empty on purpose — paste a key to set or replace it.
+      // Field stays empty on purpose. Paste a key to set or replace it.
       apiKey = ""
       keyStatus = ""
       microphones = MicrophoneInputCatalog.listInputs()
@@ -61,15 +56,10 @@ struct SettingsContentView: View {
   private var keySection: some View {
     SettingsSection(title: "API key") {
       VStack(alignment: .leading, spacing: 12) {
-        Text("Live transcription over a warm OpenAI realtime WebSocket while you speak.")
-          .font(.system(size: 12))
-          .foregroundStyle(AppTheme.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
-
         HStack(spacing: 12) {
           ThemedTextField(
             placeholder: settings.hasAPIKey && apiKey.isEmpty
-              ? "Key saved — paste a new one to replace"
+              ? "Key saved. Paste a new one to replace."
               : OpenAIService.keyPlaceholder,
             text: $apiKey,
             isSecure: true,
@@ -96,7 +86,7 @@ struct SettingsContentView: View {
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
         } else if !settings.hasAPIKey {
-          Text("Paste your OpenAI API key here, then Save Key")
+          Text("Paste an OpenAI API key, then Save Key.")
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
         }
@@ -121,13 +111,6 @@ struct SettingsContentView: View {
       VStack(alignment: .leading, spacing: 12) {
         HotkeyRecorderView(settings: settings)
 
-        Text(
-          "One shortcut does it all. After Space-lock, press again (or Esc) to finish and paste. Esc cancels only before you lock. If you change apps while finishing, the transcript is copied instead of pasted into the wrong place."
-        )
-        .font(.system(size: 12))
-        .foregroundStyle(AppTheme.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-
         VStack(alignment: .leading, spacing: 8) {
           Toggle(
             "Tap to keep listening (press again to finish)",
@@ -151,11 +134,9 @@ struct SettingsContentView: View {
           )
 
           if settings.hotkey.usesSpaceKey {
-            Text(
-              "Space-lock isn’t available while your shortcut uses the Space key (it would fight itself)."
-            )
-            .font(.system(size: 11))
-            .foregroundStyle(AppTheme.faintText)
+            Text("Space-lock is off because the shortcut already uses Space.")
+              .font(.system(size: 11))
+              .foregroundStyle(AppTheme.faintText)
           }
 
           Toggle(
@@ -174,72 +155,23 @@ struct SettingsContentView: View {
               .labelsHidden()
               .pickerStyle(.segmented)
               .frame(maxWidth: 280)
-              Text(settings.overlayLayout.explanation)
-                .font(.system(size: 11))
-                .foregroundStyle(AppTheme.faintText)
             }
             .padding(.leading, 22)
           }
 
           Toggle(
-            "Play a soft sound when listening starts and stops",
+            "Play a sound when listening starts and stops",
             isOn: $settings.playDictationSounds
           )
           .toggleStyle(.checkbox)
         }
-
-        Text(shortcutBehaviorSummary)
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
-          .fixedSize(horizontal: false, vertical: true)
       }
-    }
-  }
-
-  private var shortcutBehaviorSummary: String {
-    if settings.hotkey.kind == .modifierHold {
-      switch (settings.tapStartsHandsFree, settings.holdIsPushToTalk) {
-      case (true, true):
-        return settings.spaceLocksHandsFree && !settings.hotkey.usesSpaceKey
-          ? "Tap \(settings.hotkey.display) to keep listening, or hold to talk. Space locks; press again to finish."
-          : "Tap \(settings.hotkey.display) to keep listening, or hold to talk until you release."
-      case (true, false):
-        return "Tap \(settings.hotkey.display) to start; tap again to finish."
-      case (false, true):
-        return settings.spaceLocksHandsFree && !settings.hotkey.usesSpaceKey
-          ? "Hold \(settings.hotkey.display) to talk. Space locks; press again to finish."
-          : "Hold \(settings.hotkey.display) to talk; release to finish."
-      case (false, false):
-        return "Turn on tap and/or hold above so the shortcut does something."
-      }
-    }
-
-    switch (settings.tapStartsHandsFree, settings.holdIsPushToTalk) {
-    case (true, true):
-      return settings.spaceLocksHandsFree && !settings.hotkey.usesSpaceKey
-        ? "Tap to start and stop, or hold to talk. While holding, Space locks hands-free."
-        : "Tap to start and stop, or hold to talk until you release."
-    case (true, false):
-      return "Tap to start; tap again to finish."
-    case (false, true):
-      return settings.spaceLocksHandsFree && !settings.hotkey.usesSpaceKey
-        ? "Hold to talk. Space locks hands-free; press the shortcut again to finish."
-        : "Hold to talk; release to finish."
-    case (false, false):
-      return "Turn on tap and/or hold above so the shortcut does something."
     }
   }
 
   private var voiceSection: some View {
     SettingsSection(title: "Microphone") {
       VStack(alignment: .leading, spacing: 16) {
-        Text(
-          "Try microphones in order. Docked with a USB mic? Put it first. Away from the desk? Built-in is used when the USB mic isn’t plugged in."
-        )
-        .font(.system(size: 12))
-        .foregroundStyle(AppTheme.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-
         MicrophonePriorityEditor(
           settings: settings,
           microphones: microphones
@@ -256,47 +188,26 @@ struct SettingsContentView: View {
           }
           .labelsHidden()
           .frame(width: 200)
-          Text(settings.micProfile.explanation)
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
         }
-
-        Text("Writing guidance, languages, and response timing live under Words.")
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
       }
     }
   }
 
   private var updatesSection: some View {
     SettingsSection(title: "Updates") {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("ListenToMe checks for updates automatically. You can also check now.")
-          .font(.system(size: 12))
-          .foregroundStyle(AppTheme.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
-
-        Button("Check for Updates…") {
-          updates.checkForUpdates(nil)
-        }
-        .buttonStyle(RecordActionButtonStyle())
+      Button("Check for Updates…") {
+        updates.checkForUpdates(nil)
       }
+      .buttonStyle(RecordActionButtonStyle())
     }
   }
 
   private var permissionsSection: some View {
     SettingsSection(title: "Mac permissions") {
       VStack(alignment: .leading, spacing: 16) {
-        Text(
-          "Grant opens the right System Settings pane. For Accessibility, enable the ListenToMe row (or drag the app in). After the toggle is on, quit ListenToMe from the menu bar and reopen — macOS often won’t trust a menu-bar app until relaunch. Turn off any extra ListenToMe copies in the list from old builds."
-        )
-        .font(.system(size: 12))
-        .foregroundStyle(AppTheme.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-
         PermissionGuidanceRow(
           title: "Microphone",
-          detail: "Needed to hear your dictation",
+          detail: "Needed to hear you.",
           pane: .microphone,
           granted: permissions.microphoneGranted
         )
@@ -304,8 +215,8 @@ struct SettingsContentView: View {
         PermissionGuidanceRow(
           title: "Accessibility",
           detail: permissions.accessibilityGranted
-            ? "Paste and modifier shortcuts are allowed."
-            : "Enable ListenToMe in Privacy & Security → Accessibility, then quit and reopen this app.",
+            ? "Paste is allowed."
+            : "Enable ListenToMe, then quit and reopen the app.",
           pane: .accessibility,
           granted: permissions.accessibilityGranted
         )

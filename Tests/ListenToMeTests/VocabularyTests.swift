@@ -96,7 +96,7 @@ final class VocabularyTests: XCTestCase {
       vocabulary: vocabulary,
       languages: ["en"],
       delay: .low,
-      targetAppName: "Ghostty — Hankyone Sidebar Fork"
+      targetAppName: "Ghostty  -  Hankyone Sidebar Fork"
     )
 
     XCTAssertLessThanOrEqual(

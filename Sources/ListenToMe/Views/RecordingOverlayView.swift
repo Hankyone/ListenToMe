@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Compact floating plate while dictating — tiny meter, room for live text.
+/// Compact floating plate while dictating  -  tiny meter, room for live text.
 struct RecordingOverlayView: View {
   @ObservedObject var coordinator: RecordingCoordinator
   @ObservedObject var settings: SettingsStore

@@ -84,7 +84,7 @@ private final class SessionTapState: @unchecked Sendable {
   }
 }
 
-/// CGEvent taps see Space while a Carbon hotkey is still held — NSEvent
+/// CGEvent taps see Space while a Carbon hotkey is still held  -  NSEvent
 /// global monitors often do not.
 private let sessionTapCallback: CGEventTapCallBack = { _, type, event, userInfo in
   guard let userInfo else {
@@ -129,7 +129,7 @@ private let sessionTapCallback: CGEventTapCallBack = { _, type, event, userInfo 
 /// - A key combo (Carbon hotkey): tap toggles, hold speaks until release.
 /// - A lone modifier (Fn, Right Command…): hold speaks until release.
 /// While a take is live, a CGEvent tap handles Escape (cancel) and Space
-/// (lock hands-free) — including while the primary shortcut is still held.
+/// (lock hands-free)  -  including while the primary shortcut is still held.
 @MainActor
 final class HotkeyService {
   private enum HotkeyIdentifier: UInt32 {
@@ -246,7 +246,7 @@ final class HotkeyService {
       if kind == UInt32(kEventHotKeyPressed) {
         if comboIsDown {
           // Key-repeat fires another "pressed" after ~0.5s while the key is
-          // still down — that must not stop a live take. Only treat it as a
+          // still down  -  that must not stop a live take. Only treat it as a
           // new press when the physical key is already up (missed key-up).
           if isPrimaryKeyHeld() {
             return
@@ -353,7 +353,7 @@ final class HotkeyService {
     }
     let keyHandler: (NSEvent) -> Void = { [weak self] event in
       MainActor.assumeIsolated {
-        // Chord keystrokes cancel a pending hold confirm — but not Space/Esc,
+        // Chord keystrokes cancel a pending hold confirm  -  but not Space/Esc,
         // which the session tap handles for lock/cancel.
         if event.keyCode == UInt16(kVK_Space)
           || event.keyCode == UInt16(kVK_Escape)
@@ -416,7 +416,7 @@ final class HotkeyService {
       if wasActive {
         onRelease?()
       } else if wasPending, tapStartsHandsFree(), !sessionControlsActive {
-        // Released before the hold confirm — treat as a tap: start hands-free.
+        // Released before the hold confirm  -  treat as a tap: start hands-free.
         pressWasHoldConfirm = false
         onPress?()
       }

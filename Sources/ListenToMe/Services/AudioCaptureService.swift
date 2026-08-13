@@ -4,7 +4,7 @@ import Foundation
 
 /// Microphone capture with VoiceInk/Handy-style warm-up.
 ///
-/// All HAL / `AVAudioEngine` work runs on `hardwareQueue` — never on the
+/// All HAL / `AVAudioEngine` work runs on `hardwareQueue`  -  never on the
 /// main actor. The graph is prepared while idle, but the engine is **stopped**
 /// so macOS does not show the orange mic privacy indicator between takes.
 /// Hotkey only needs `engine.start()`, which is far cheaper than rebuilding.
@@ -56,10 +56,10 @@ final class AudioCaptureService: @unchecked Sendable {
     interleaved: true
   )!
 
-  /// ~40ms of 24 kHz mono Int16 — snappier first bytes to the API.
+  /// ~40ms of 24 kHz mono Int16  -  snappier first bytes to the API.
   private let targetChunkSize = 1_920
   /// Handy keeps the graph warm ~30s after a take for back-to-back dictation
-  /// (engine stopped — no orange mic light while waiting).
+  /// (engine stopped  -  no orange mic light while waiting).
   private let keepAliveSeconds: TimeInterval = 30
 
   var isRecording: Bool {
@@ -319,7 +319,7 @@ final class AudioCaptureService: @unchecked Sendable {
     }
 
     engine.prepare()
-    // Only run the engine while actively recording — a running input keeps
+    // Only run the engine while actively recording  -  a running input keeps
     // the macOS orange mic indicator lit.
     if startImmediately {
       try engine.start()

@@ -17,7 +17,7 @@ enum UserFacingError {
 
     if looksLikeLanguageProblem(trimmed) {
       return
-        "That language code isn’t supported. In Setup, use codes like en or fr — not regional tags like fr-CA."
+        "That language code isn’t supported. In Setup, use codes like en or fr, not regional tags like fr-CA."
     }
 
     if trimmed.localizedCaseInsensitiveContains("401")
@@ -49,12 +49,12 @@ enum UserFacingError {
 
     if looksLikePromptTooLong(trimmed) {
       return
-        "Writing guidance was too long for live transcription. It’s trimmed automatically now — try again."
+        "Writing guidance was too long for live transcription. It’s trimmed automatically now. Try again."
     }
 
     if looksLikeLengthLimit(trimmed) {
       return
-        "Live transcription hit a length limit. Your audio is saved in History — play it back or hit Reprocess."
+        "Live transcription hit a length limit. Your audio is saved in History. Play it back or hit Reprocess."
     }
 
     if trimmed.localizedCaseInsensitiveContains("internet")

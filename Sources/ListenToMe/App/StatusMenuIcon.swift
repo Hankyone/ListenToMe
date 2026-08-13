@@ -9,7 +9,7 @@ enum StatusMenuIcon {
   )
 
   /// Idle: template waveform (menu bar paints it light).
-  /// Active: orange waveform — not a black `record.circle.fill` blob.
+  /// Active: orange waveform  -  not a black `record.circle.fill` blob.
   static func statusImage(isActive: Bool) -> NSImage? {
     image(
       systemName: "waveform",

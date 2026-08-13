@@ -1,3 +1,3 @@
-## ListenToMe 0.3.50
+## ListenToMe 0.3.51
 
-- Words → Writing guidance now shows that empty is the factory default; Reset clearing the box is expected, not a missing prompt
+- Setup and Words have less copy. Writing guidance no longer lists spoken revisions under the box

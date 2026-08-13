@@ -3,7 +3,7 @@ import Foundation
 /// Pauses common media apps and mutes system output while dictating, then
 /// restores both when the take ends (Handy-style ducking + media pause).
 ///
-/// All `osascript` work runs on a utility queue — never the main thread.
+/// All `osascript` work runs on a utility queue  -  never the main thread.
 /// `NSAppleScript.execute` on MainActor was freezing the overlay timer and
 /// waveform for 5–8s at the start of every take.
 final class MediaPauseService: @unchecked Sendable {
@@ -36,7 +36,7 @@ final class MediaPauseService: @unchecked Sendable {
 
     let paused = pausePlayingMediaApps()
     guard session == generation else {
-      // Take already ended while we were scripting — put media back.
+      // Take already ended while we were scripting  -  put media back.
       for app in paused {
         resumeMediaApp(app)
       }

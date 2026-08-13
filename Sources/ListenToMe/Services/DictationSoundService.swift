@@ -12,7 +12,7 @@ final class DictationSoundService {
   private var stopPlayer: AVAudioPlayer?
   private var didPrepare = false
 
-  /// Soft peak — present, never shouty over speech or UI.
+  /// Soft peak  -  present, never shouty over speech or UI.
   private let playbackVolume: Float = 0.20
 
   func prepare() {
@@ -75,7 +75,7 @@ final class DictationSoundService {
     case stop
   }
 
-  /// Hand-tuned soft chirps — short sine sweeps with a gentle harmonic and
+  /// Hand-tuned soft chirps  -  short sine sweeps with a gentle harmonic and
   /// exponential air, rendered at 48 kHz for a clean DAC path.
   private static func renderCue(kind: CueKind) -> Data {
     let sampleRate = 48_000.0
@@ -86,13 +86,13 @@ final class DictationSoundService {
 
     switch kind {
     case .start:
-      // Soft “open” — quick lift, ~48 ms.
+      // Soft “open”  -  quick lift, ~48 ms.
       duration = 0.048
       f0 = 880
       f1 = 1_320
       peak = 0.55
     case .stop:
-      // Soft “close” — slightly longer settle, ~62 ms.
+      // Soft “close”  -  slightly longer settle, ~62 ms.
       duration = 0.062
       f0 = 740
       f1 = 380
@@ -119,7 +119,7 @@ final class DictationSoundService {
       let harmonic = 0.18 * sin(2 * phase)
       var signal = fundamental + harmonic
 
-      // Tiny noise tick on the attack only — tactile without harshness.
+      // Tiny noise tick on the attack only  -  tactile without harshness.
       if progress < 0.08 {
         let noise = Double.random(in: -1...1) * (1 - progress / 0.08)
         signal += 0.04 * noise

@@ -324,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func lockDictationFromHold() {
     guard model.settings.spaceLocksHandsFree else { return }
     guard !model.settings.hotkey.usesSpaceKey else { return }
-    // Allow lock as soon as this press started a take — phase may not have
+    // Allow lock as soon as this press started a take  -  phase may not have
     // flipped to .recording yet if start() is still hopping onto MainActor.
     if pressStartedRecording
       || model.recording.phase == .connecting
@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       liveKind = .tap
       pressStartedRecording = false
       holdClassifyTask?.cancel()
-      // This press is done — release must not PTT-stop, and the next press
+      // This press is done  -  release must not PTT-stop, and the next press
       // must be free to finish.
       pressAt = pressAt ?? Date()
       overlayController?.update(for: .recording, enabled: true)
@@ -408,7 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       systemSymbolName: "waveform",
       accessibilityDescription: "ListenToMe"
     )
-    statusItem.button?.toolTip = "ListenToMe — click for recent, right-click for menu"
+    statusItem.button?.toolTip = "ListenToMe. Click for recent, right-click for menu"
 
     // Keep menu off the item itself so left-click can open the history panel.
     let menu = NSMenu()
@@ -660,7 +660,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       )
       window.title = "ListenToMe"
       window.minSize = NSSize(width: 560, height: 420)
-      // Hard caps — never let SwiftUI content or a huge autosave frame
+      // Hard caps  -  never let SwiftUI content or a huge autosave frame
       // stretch the window across a 4K display.
       window.maxSize = NSSize(width: 1_100, height: 860)
       window.titlebarAppearsTransparent = false
@@ -730,7 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func updateStatusItem(for phase: RecordingPhase) {
-    // Orange only while actually listening — failed/error used the same tint
+    // Orange only while actually listening  -  failed/error used the same tint
     // and looked like a stuck "locked" session with no overlay.
     let isListening = phase == .recording || phase == .connecting
     statusItem?.button?.image = StatusMenuIcon.statusImage(isActive: isListening)

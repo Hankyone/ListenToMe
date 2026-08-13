@@ -105,7 +105,7 @@ final class StatusHistoryPanelController {
       }
     )
     let controller = NSHostingController(rootView: root)
-    // Propose the max height we allow — some SwiftUI versions echo a huge
+    // Propose the max height we allow  -  some SwiftUI versions echo a huge
     // proposed height back as the fitting size.
     let maxHeight: CGFloat = 420
     let fitting = controller.sizeThatFits(

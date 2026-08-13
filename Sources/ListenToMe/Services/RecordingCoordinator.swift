@@ -85,7 +85,7 @@ final class RecordingCoordinator: ObservableObject {
     let id = takeID
 
     // Paint live UI first. Never run AppleScript / engine.start / TLS on the
-    // main thread — that froze the overlay at 0:00 with a dead waveform.
+    // main thread  -  that froze the overlay at 0:00 with a dead waveform.
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -208,7 +208,7 @@ final class RecordingCoordinator: ObservableObject {
     scheduleStandbyConnection()
   }
 
-  /// Mic + realtime standby — call on launch and after each take.
+  /// Mic + realtime standby  -  call on launch and after each take.
   func prepareForNextTake() {
     prepareMicrophone()
     prepareRealtimeSession()
@@ -376,7 +376,7 @@ final class RecordingCoordinator: ObservableObject {
     )
     audioContinuation = streamPair.continuation
 
-    // Mic first on the hardware queue — waveform is local and must not wait
+    // Mic first on the hardware queue  -  waveform is local and must not wait
     // on standby claim / websocket work.
     try await audioCapture.start(
       recordingURL: recordingURL,
@@ -970,7 +970,7 @@ final class RecordingCoordinator: ObservableObject {
     prepareForNextTake()
   }
 
-  /// End a take with nothing to deliver — no banner, no "Dictation stopped".
+  /// End a take with nothing to deliver  -  no banner, no "Dictation stopped".
   private func abandonQuietly() {
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
@@ -1034,7 +1034,7 @@ final class RecordingCoordinator: ObservableObject {
   private func startElapsedTimer() {
     elapsedTask?.cancel()
     // Prefer a RunLoop timer so ticks keep landing even when Swift concurrency
-    // is busy — TimelineView in the overlay is the primary display path.
+    // is busy  -  TimelineView in the overlay is the primary display path.
     elapsedTask = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 100_000_000)

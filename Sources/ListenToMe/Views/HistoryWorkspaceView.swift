@@ -70,7 +70,7 @@ private struct HistoryListView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .padding(28)
       } else {
-        // ScrollView instead of List — system List selection draws a blue
+        // ScrollView instead of List. System List selection draws a blue
         // rect that bleeds past our chamfered plates.
         ScrollView {
           LazyVStack(spacing: 6) {
@@ -184,9 +184,7 @@ private struct EmptyHistoryView: View {
       Text("Your words land here.")
         .font(.system(size: 18, weight: .semibold))
         .foregroundStyle(AppTheme.primaryText)
-      Text(
-        "Press \(hotkeyDisplay) to dictate. Space while holding locks; press again or Esc to finish and paste."
-      )
+      Text("Press \(hotkeyDisplay) to dictate.")
       .font(.system(size: 13))
       .foregroundStyle(AppTheme.secondaryText)
       .multilineTextAlignment(.center)
@@ -213,7 +211,7 @@ private struct HistoryDetailView: View {
           Text("Choose a recording")
             .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
-          Text("The transcript and original audio will appear here.")
+          Text("The transcript and original audio appear here.")
             .font(.system(size: 13))
             .foregroundStyle(AppTheme.secondaryText)
         }

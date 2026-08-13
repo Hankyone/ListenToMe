@@ -426,7 +426,7 @@ enum VocabularyValidation {
 
 enum DeliveryPolicy {
   /// Whether we should attempt insert/paste after reactivating the target.
-  /// Focus is checked *after* activation in `TextDeliveryService` — finishing a
+  /// Focus is checked *after* activation in `TextDeliveryService`  -  finishing a
   /// recording often leaves another process frontmost briefly.
   static func canAttemptPaste(
     target: TargetApplication?,

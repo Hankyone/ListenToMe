@@ -10,9 +10,9 @@ enum HotkeyTakeAction: Equatable {
 enum DictationLiveKind: Equatable {
   /// Key is down; click vs hold not decided yet.
   case unclassified
-  /// Released before the hold threshold — listening until the next click.
+  /// Released before the hold threshold  -  listening until the next click.
   case tap
-  /// Crossed the hold threshold — release always ends the take.
+  /// Crossed the hold threshold  -  release always ends the take.
   case hold
 }
 

@@ -48,7 +48,7 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(micProfile.rawValue, forKey: Keys.micProfile) }
   }
 
-  /// Preferred microphones in order — first available device wins at capture time.
+  /// Preferred microphones in order  -  first available device wins at capture time.
   /// Empty string entries mean “System Default”.
   @Published var microphonePriorityUIDs: [String] {
     didSet { defaults.set(microphonePriorityUIDs, forKey: Keys.microphonePriorityUIDs) }
@@ -169,7 +169,7 @@ final class SettingsStore: ObservableObject {
       vocabulary = []
     }
 
-    // File presence only — never load the secret at launch.
+    // File presence only  -  never load the secret at launch.
     hasAPIKey = apiKeys.hasStoredKey()
   }
 

@@ -21,12 +21,6 @@ struct VocabularyView: View {
           Text("How your words come out.")
             .font(.system(size: 28, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
-          Text(
-            "Custom spellings, writing guidance, languages, and response timing all shape the transcript together."
-          )
-          .font(.system(size: 13))
-          .foregroundStyle(AppTheme.secondaryText)
-          .frame(maxWidth: 650, alignment: .leading)
         }
 
         guidanceSection
@@ -72,9 +66,7 @@ struct VocabularyView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
           {
-            Text(
-              "Optional. Leave empty (the default) or add notes for the live model — tone, punctuation, how you want French vs English to look."
-            )
+            Text("Optional notes for the live model.")
             .font(.system(size: 13))
             .foregroundStyle(AppTheme.faintText)
             .padding(.horizontal, 14)
@@ -83,7 +75,6 @@ struct VocabularyView: View {
           }
         }
         .onChange(of: settings.basePrompt) { _, _ in
-          // Persists on every edit via SettingsStore; flash after a pause.
           scheduleGuidanceSavedFlash()
         }
         .onChange(of: guidanceFocused) { _, focused in
@@ -91,11 +82,6 @@ struct VocabularyView: View {
             flashGuidanceSaved()
           }
         }
-        Text(
-          "Default is empty. Every take still sends the app in focus, your custom words, and spoken revisions (correction, scratch that, I mean, annule, je veux dire)."
-        )
-        .font(.system(size: 11))
-        .foregroundStyle(AppTheme.faintText)
       }
     }
   }
@@ -136,9 +122,6 @@ struct VocabularyView: View {
           }
           .labelsHidden()
           .pickerStyle(.segmented)
-          Text(settings.delay.explanation)
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
         }
 
         VStack(alignment: .leading, spacing: 6) {
@@ -154,7 +137,7 @@ struct VocabularyView: View {
           .frame(maxWidth: 280)
           Text(
             settings.languageHints.message
-              ?? "Comma-separated ISO codes (en, fr). Not regional tags like fr-CA. Empty for no hint."
+              ?? "ISO codes like en, fr. Not fr-CA."
           )
           .font(.system(size: 11))
           .foregroundStyle(
@@ -173,12 +156,6 @@ struct VocabularyView: View {
   private var customWordsSection: some View {
     WordsSection(title: "Custom words") {
       VStack(alignment: .leading, spacing: 12) {
-        Text(
-          "The first field is the spelling you want in the transcript. Add other spellings the model might hear, separated by commas — for example Anouar with Anwar, Anuar. These are hints, not hard replacements."
-        )
-        .font(.system(size: 12))
-        .foregroundStyle(AppTheme.secondaryText)
-
         HStack(alignment: .top, spacing: 12) {
           VStack(alignment: .leading, spacing: 6) {
             ThemedTextField(
@@ -209,7 +186,7 @@ struct VocabularyView: View {
         }
 
         if settings.vocabulary.isEmpty {
-          Text("No custom words yet. Start with your name and the products you mention most.")
+          Text("No custom words yet.")
             .font(.system(size: 13))
             .foregroundStyle(AppTheme.secondaryText)
             .padding(.vertical, 8)

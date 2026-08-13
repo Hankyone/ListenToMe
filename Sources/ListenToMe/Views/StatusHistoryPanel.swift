@@ -196,7 +196,7 @@ struct StatusHistoryPanel: View {
       Text("No dictations yet")
         .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(AppTheme.primaryText)
-      Text("Use your shortcut to capture something. It will show up here.")
+      Text("Use your shortcut to capture something.")
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
