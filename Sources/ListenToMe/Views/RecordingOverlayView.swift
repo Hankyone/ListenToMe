@@ -5,7 +5,8 @@ struct RecordingOverlayView: View {
   @ObservedObject var coordinator: RecordingCoordinator
   @ObservedObject var settings: SettingsStore
 
-  static let panelSize = CGSize(width: 420, height: 58)
+  private var layout: OverlayLayout { settings.overlayLayout }
+  private var panelSize: CGSize { layout.panelSize }
 
   private var isDelivered: Bool {
     if case .delivered = coordinator.phase { return true }
@@ -13,7 +14,7 @@ struct RecordingOverlayView: View {
   }
 
   var body: some View {
-    HStack(alignment: .center, spacing: 10) {
+    HStack(alignment: layout == .tall ? .top : .center, spacing: 10) {
       Group {
         if coordinator.phase == .connecting {
           ConnectingWaveform(barWidth: 2)
@@ -27,11 +28,12 @@ struct RecordingOverlayView: View {
         }
       }
       .frame(width: 40, height: 20)
+      .padding(.top, layout == .tall ? 2 : 0)
 
       VStack(alignment: .leading, spacing: 2) {
         transcriptLine
           .font(.system(size: 12))
-          .lineLimit(2)
+          .lineLimit(layout.lineLimit)
           .truncationMode(.head)
           .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -50,12 +52,13 @@ struct RecordingOverlayView: View {
           )
           .frame(minWidth: 34, alignment: .trailing)
       }
+      .padding(.top, layout == .tall ? 2 : 0)
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 9)
     .frame(
-      width: Self.panelSize.width,
-      height: Self.panelSize.height
+      width: panelSize.width,
+      height: panelSize.height
     )
     .background(
       ChamferedPlate(cut: 9)
@@ -85,14 +88,12 @@ struct RecordingOverlayView: View {
 
   private var statusLine: String {
     switch coordinator.phase {
-    case .connecting: "Listening"
-    case .recording:
+    case .connecting, .recording, .finishing:
       if let target = coordinator.targetApplication?.name {
         "Listening for \(target)"
       } else {
         "Listening"
       }
-    case .finishing: "Finishing"
     case .delivered(let outcome): outcome.title
     case .failed: coordinator.errorMessage ?? "Audio saved"
     case .idle: "Ready"
@@ -121,7 +122,7 @@ struct RecordingOverlayView: View {
   private var placeholderTranscript: String {
     switch coordinator.phase {
     case .connecting: "Listening…"
-    case .finishing: "Checking last words…"
+    case .finishing: "Listening…"
     case .delivered: "Done"
     default: "Listening…"
     }
@@ -129,7 +130,7 @@ struct RecordingOverlayView: View {
 
   private var trailingHint: String {
     switch coordinator.phase {
-    case .recording, .connecting:
+    case .recording, .connecting, .finishing:
       if coordinator.isHandsFreeLocked {
         return "press again · esc finishes"
       }

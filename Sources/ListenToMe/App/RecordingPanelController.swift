@@ -9,10 +9,12 @@ private final class RecordingPanel: NSPanel {
 @MainActor
 final class RecordingPanelController {
   private let panel: RecordingPanel
+  private let settings: SettingsStore
   private var hideTask: Task<Void, Never>?
 
   init(coordinator: RecordingCoordinator, settings: SettingsStore) {
-    let size = RecordingOverlayView.panelSize
+    self.settings = settings
+    let size = settings.overlayLayout.panelSize
     panel = RecordingPanel(
       contentRect: NSRect(
         x: 0,
@@ -29,7 +31,6 @@ final class RecordingPanelController {
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
-    panel.hidesOnDeactivate = false
     panel.contentView = NSHostingView(
       rootView: RecordingOverlayView(
         coordinator: coordinator,
@@ -45,6 +46,13 @@ final class RecordingPanelController {
     panel.orderOut(nil)
   }
 
+  func applyLayout() {
+    resizeToCurrentLayout()
+    if panel.isVisible {
+      positionOnScreen()
+    }
+  }
+
   func update(for phase: RecordingPhase, enabled: Bool) {
     hideTask?.cancel()
     hideTask = nil
@@ -53,7 +61,7 @@ final class RecordingPanelController {
       return
     }
     switch phase {
-    case .connecting, .recording:
+    case .connecting, .recording, .finishing:
       show()
     case .failed:
       show()
@@ -62,14 +70,25 @@ final class RecordingPanelController {
         guard !Task.isCancelled else { return }
         self?.panel.orderOut(nil)
       }
-    case .finishing, .delivered, .idle:
+    case .delivered, .idle:
       panel.orderOut(nil)
     }
   }
 
   private func show() {
+    resizeToCurrentLayout()
     positionOnScreen()
+    guard !panel.isVisible else { return }
     panel.orderFrontRegardless()
+  }
+
+  private func resizeToCurrentLayout() {
+    let size = settings.overlayLayout.panelSize
+    let newSize = NSSize(width: size.width + 4, height: size.height + 12)
+    guard panel.frame.size != newSize else { return }
+    var frame = panel.frame
+    frame.size = newSize
+    panel.setFrame(frame, display: true)
   }
 
   private func positionOnScreen() {
@@ -79,7 +98,9 @@ final class RecordingPanelController {
       x: visible.midX - panel.frame.width / 2,
       y: visible.minY + 42
     )
-    panel.setFrameOrigin(origin)
+    if panel.frame.origin != origin {
+      panel.setFrameOrigin(origin)
+    }
   }
 
   private func positionOffscreen() {

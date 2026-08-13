@@ -126,8 +126,8 @@ struct StatusHistoryPanel: View {
 
   private var modelStatus: String {
     if recording.phase == .recording { return "Listening" }
-    if recording.phase == .connecting { return "Connecting" }
-    if recording.phase == .finishing { return "Finishing" }
+    if recording.phase == .connecting { return "Listening" }
+    if recording.phase == .finishing { return "Listening" }
     if notice != nil || recording.phase == .failed { return "Needs attention" }
     return "Ready"
   }

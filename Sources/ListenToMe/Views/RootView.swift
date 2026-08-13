@@ -84,9 +84,8 @@ struct RootView: View {
     switch recording.phase {
     case .recording:
       recording.isHandsFreeLocked ? "Locked" : "Listening"
-    case .connecting: "Connecting"
-    case .finishing: "Finishing"
-    case .delivered: "Delivered"
+    case .connecting, .finishing: "Listening"
+    case .delivered: "Ready"
     default: model.settings.hotkey.display
     }
   }

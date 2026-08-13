@@ -161,6 +161,10 @@ final class RecordingCoordinator: ObservableObject {
         await abortIncompleteStart()
         return
       }
+      if stopRequestedWhileStarting {
+        await abortIncompleteStart()
+        return
+      }
 
       try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
       guard id == takeID else {
@@ -213,14 +217,14 @@ final class RecordingCoordinator: ObservableObject {
   /// opening the microphone. Extra presses bump `takeID` so a late start
   /// cannot reopen the mic after this stop.
   func requestStop() async {
-    takeID += 1
     if phase == .recording {
-      // Live path isn't up yet — let `start()` abort instead of racing
-      // `stop()` against `startLiveCapture()`.
+      // Live path isn't up yet — finish this take after start() connects,
+      // instead of discarding speech that already happened.
       if audioSendTask == nil {
         stopRequestedWhileStarting = true
         return
       }
+      takeID += 1
       await stop()
     } else if phase == .connecting {
       stopRequestedWhileStarting = true

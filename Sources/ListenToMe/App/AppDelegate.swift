@@ -225,9 +225,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       pressStartedRecording = false
       hotkey.setSpaceLockArmed(false)
       playStopCueIfEnabled()
-      if model.settings.showRecordingOverlay {
-        overlayController?.update(for: .finishing, enabled: true)
-      }
       Task {
         await model.recording.requestStop()
       }
@@ -275,10 +272,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     guard isHoldStyle else { return }
 
-    // Drop the plate immediately on release — don't wait for paste/finalize.
-    if model.settings.showRecordingOverlay {
-      overlayController?.update(for: .finishing, enabled: true)
-    }
     playStopCueIfEnabled()
 
     pendingReleaseTask?.cancel()
@@ -611,6 +604,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
       .store(in: &subscriptions)
 
+    model.settings.$overlayLayout
+      .dropFirst()
+      .removeDuplicates()
+      .sink { [weak self] _ in
+        self?.overlayController?.applyLayout()
+      }
+      .store(in: &subscriptions)
+
     model.settings.$hasAPIKey
       .sink { [weak self] _ in
         guard let self else { return }
@@ -728,10 +729,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var phaseTitle: String {
     switch model.recording.phase {
     case .idle: "Ready"
-    case .connecting: "Connecting"
-    case .recording: "Listening"
-    case .finishing: "Finishing"
-    case .delivered: "Delivered"
+    case .connecting, .recording, .finishing: "Listening"
+    case .delivered: "Ready"
     case .failed: "Needs Attention"
     }
   }

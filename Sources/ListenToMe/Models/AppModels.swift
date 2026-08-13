@@ -193,6 +193,45 @@ enum MicProfile: String, CaseIterable, Identifiable, Codable, Sendable {
   }
 }
 
+enum OverlayLayout: String, CaseIterable, Identifiable, Codable, Sendable {
+  case compact
+  case wide
+  case tall
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .compact: "Standard"
+    case .wide: "Wide"
+    case .tall: "Tall"
+    }
+  }
+
+  var explanation: String {
+    switch self {
+    case .compact: "Compact plate while you talk."
+    case .wide: "Twice as wide, so more of the live transcript stays on one line."
+    case .tall: "Twice as tall, so more lines of the live transcript stay visible."
+    }
+  }
+
+  var panelSize: CGSize {
+    switch self {
+    case .compact: CGSize(width: 420, height: 58)
+    case .wide: CGSize(width: 840, height: 58)
+    case .tall: CGSize(width: 420, height: 116)
+    }
+  }
+
+  var lineLimit: Int {
+    switch self {
+    case .compact, .wide: 2
+    case .tall: 5
+    }
+  }
+}
+
 enum OpenAIService {
   static let keyPlaceholder = "sk-…"
   static let createKeyLabel = "Create an OpenAI API key"

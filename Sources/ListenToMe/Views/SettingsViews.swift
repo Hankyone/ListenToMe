@@ -164,6 +164,23 @@ struct SettingsContentView: View {
           )
           .toggleStyle(.checkbox)
 
+          if settings.showRecordingOverlay {
+            VStack(alignment: .leading, spacing: 6) {
+              Picker("Panel size", selection: $settings.overlayLayout) {
+                ForEach(OverlayLayout.allCases) { layout in
+                  Text(layout.title).tag(layout)
+                }
+              }
+              .labelsHidden()
+              .pickerStyle(.segmented)
+              .frame(maxWidth: 280)
+              Text(settings.overlayLayout.explanation)
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.faintText)
+            }
+            .padding(.leading, 22)
+          }
+
           Toggle(
             "Play a soft sound when listening starts and stops",
             isOn: $settings.playDictationSounds
