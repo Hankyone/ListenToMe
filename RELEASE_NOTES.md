@@ -1,3 +1,3 @@
-## ListenToMe 0.3.49
+## ListenToMe 0.3.50
 
-- Hold-to-talk now ends the moment you release — the plate goes away immediately, and takes shorter than a fraction of a second skip transcription. A tap still keeps listening until a later click; a bounce right after a tap does not cancel the take
+- Words → Writing guidance now shows that empty is the factory default; Reset clearing the box is expected, not a missing prompt

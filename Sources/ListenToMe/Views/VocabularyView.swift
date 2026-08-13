@@ -57,27 +57,42 @@ struct VocabularyView: View {
           .buttonStyle(QuietButtonStyle())
           .disabled(settings.isUsingDefaultBasePrompt)
         }
-        TextEditor(text: $settings.basePrompt)
-          .font(.system(size: 13))
-          .frame(minHeight: 100)
-          .scrollContentBackground(.hidden)
-          .padding(9)
-          .focused($guidanceFocused)
-          .background(
-            ChamferedPlate(cut: 7)
-              .fill(AppTheme.background)
-          )
-          .onChange(of: settings.basePrompt) { _, _ in
-            // Persists on every edit via SettingsStore; flash after a pause.
-            scheduleGuidanceSavedFlash()
+        ZStack(alignment: .topLeading) {
+          TextEditor(text: $settings.basePrompt)
+            .font(.system(size: 13))
+            .frame(minHeight: 100)
+            .scrollContentBackground(.hidden)
+            .padding(9)
+            .focused($guidanceFocused)
+            .background(
+              ChamferedPlate(cut: 7)
+                .fill(AppTheme.background)
+            )
+          if settings.basePrompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+          {
+            Text(
+              "Optional. Leave empty (the default) or add notes for the live model — tone, punctuation, how you want French vs English to look."
+            )
+            .font(.system(size: 13))
+            .foregroundStyle(AppTheme.faintText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 17)
+            .allowsHitTesting(false)
           }
-          .onChange(of: guidanceFocused) { _, focused in
-            if !focused {
-              flashGuidanceSaved()
-            }
+        }
+        .onChange(of: settings.basePrompt) { _, _ in
+          // Persists on every edit via SettingsStore; flash after a pause.
+          scheduleGuidanceSavedFlash()
+        }
+        .onChange(of: guidanceFocused) { _, focused in
+          if !focused {
+            flashGuidanceSaved()
           }
+        }
         Text(
-          "Saves as you type. Sent to the live model with your custom words and the app in focus."
+          "Default is empty. Every take still sends the app in focus, your custom words, and spoken revisions (correction, scratch that, I mean, annule, je veux dire)."
         )
         .font(.system(size: 11))
         .foregroundStyle(AppTheme.faintText)
