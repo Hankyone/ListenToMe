@@ -16,19 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var pressStartedRecording = false
   private var pressAt: Date?
   private var lastPressAt: Date?
-  private var pendingReleaseTask: Task<Void, Never>?
+  private var liveKind: DictationLiveKind = .unclassified
+  private var holdEndedAt: Date?
+  private var holdClassifyTask: Task<Void, Never>?
   /// Last shortcut Carbon actually accepted, so a failed re-register cannot
   /// leave the user with no dictation key at all.
   private var registeredHotkey: HotkeySpec?
 
-  /// Holding the key past this long means push-to-talk: release stops.
-  /// A quicker tap leaves dictation running until the next tap.
-  /// Space during a live take locks hands-free continuation after release.
-  private let pushToTalkThreshold: TimeInterval = 0.5
   /// Absorbs key-repeat / bounce on press (Handy-style debounce).
   private let pressDebounce: TimeInterval = 0.03
-  /// Defers PTT stop briefly so auto-repeat release/press pairs don't cut off.
-  private let releaseGraceNanoseconds: UInt64 = 50_000_000
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApplication.shared.setActivationPolicy(.accessory)
@@ -99,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     hotkey.onCancel = { [weak self] in
       guard let self else { return }
+      self.holdClassifyTask?.cancel()
+      self.pressStartedRecording = false
+      self.liveKind = .unclassified
+      self.holdEndedAt = Date()
       self.overlayController?.update(for: .idle, enabled: true)
       // After Space-lock, Esc means "I'm done" (paste), not discard.
       if self.model.recording.isHandsFreeLocked,
@@ -180,17 +180,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func hotkeyPressed() {
-    let pendingReleaseStop = pendingReleaseTask != nil
-    if pendingReleaseStop {
-      pendingReleaseTask?.cancel()
-      pendingReleaseTask = nil
-    }
-
-    let action = HotkeyTakePolicy.actionForPress(
+    let liveElapsed = pressAt.map { Date().timeIntervalSince($0) } ?? 0
+    let sinceHoldEnded = holdEndedAt.map { Date().timeIntervalSince($0) }
+    let action = DictationGesturePolicy.pressAction(
       phase: model.recording.phase,
-      pendingReleaseStop: pendingReleaseStop
+      liveKind: liveKind,
+      liveElapsed: liveElapsed,
+      keyPhysicallyDown: hotkey.isPrimaryKeyHeld(),
+      secondsSinceHoldEnded: sinceHoldEnded
     )
-    if action == .continueTake {
+    if action == .ignore {
       return
     }
 
@@ -200,57 +199,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     lastPressAt = Date()
 
     switch action {
-    case .continueTake:
+    case .ignore:
       return
     case .start:
-      pressStartedRecording = true
-      pressAt = Date()
-      // Cue + overlay on the hotkey thread — before any async start work.
-      playStartCueIfEnabled()
-      if model.settings.showRecordingOverlay {
-        overlayController?.update(for: .recording, enabled: true)
-      }
-      // Escape/Space via CGEvent tap — Space armed only for this hold.
-      // Never arm when the shortcut's own key is Space (⌃⌥Space etc.) — that
-      // same keydown/repeat would false-trigger "lock" and leave a zombie take.
-      hotkey.setSessionControlsActive(true)
-      let canSpaceLock =
-        model.settings.spaceLocksHandsFree
-        && !model.settings.hotkey.usesSpaceKey
-      hotkey.setSpaceLockArmed(canSpaceLock)
-      Task { [weak self] in
-        guard let self else { return }
-        await self.model.recording.start()
-        // start() can return without changing phase (stop won the race).
-        // Re-apply overlay from the real phase so the plate cannot stick.
-        if !self.model.recording.phase.isBusy {
-          self.overlayController?.update(
-            for: self.model.recording.phase,
-            enabled: self.model.settings.showRecordingOverlay
-          )
-        }
-      }
+      beginTakeFromGesture()
     case .stop:
-      // Second press always finishes — including after Space-lock.
-      pressStartedRecording = false
-      hotkey.setSpaceLockArmed(false)
-      playStopCueIfEnabled()
-      overlayController?.update(for: .idle, enabled: true)
-      Task { [weak self] in
-        await self?.model.recording.requestStop()
+      endTakeFromGesture()
+    }
+  }
+
+  private func beginTakeFromGesture() {
+    pressStartedRecording = true
+    pressAt = Date()
+    holdEndedAt = nil
+    let holdEnabled = model.settings.holdIsPushToTalk
+    let tapEnabled = model.settings.tapStartsHandsFree
+    if hotkey.pressWasHoldConfirm || (holdEnabled && !tapEnabled) {
+      liveKind = .hold
+    } else if tapEnabled && !holdEnabled {
+      liveKind = .tap
+    } else {
+      liveKind = .unclassified
+      scheduleHoldClassification()
+    }
+
+    playStartCueIfEnabled()
+    if model.settings.showRecordingOverlay {
+      overlayController?.update(for: .recording, enabled: true)
+    }
+    hotkey.setSessionControlsActive(true)
+    let canSpaceLock =
+      model.settings.spaceLocksHandsFree
+      && !model.settings.hotkey.usesSpaceKey
+      && liveKind != .tap
+    hotkey.setSpaceLockArmed(canSpaceLock)
+    Task { [weak self] in
+      guard let self else { return }
+      await self.model.recording.start()
+      if !self.model.recording.phase.isBusy {
+        self.liveKind = .unclassified
+        self.overlayController?.update(
+          for: self.model.recording.phase,
+          enabled: self.model.settings.showRecordingOverlay
+        )
       }
+    }
+  }
+
+  private func scheduleHoldClassification() {
+    holdClassifyTask?.cancel()
+    let threshold = DictationGesturePolicy.holdThreshold
+    holdClassifyTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(threshold * 1_000_000_000))
+      guard let self, !Task.isCancelled else { return }
+      guard self.pressStartedRecording, self.liveKind == .unclassified else { return }
+      self.liveKind = .hold
+    }
+  }
+
+  private func endTakeFromGesture() {
+    holdClassifyTask?.cancel()
+    holdClassifyTask = nil
+    pressStartedRecording = false
+    liveKind = .unclassified
+    holdEndedAt = Date()
+    hotkey.setSpaceLockArmed(false)
+    playStopCueIfEnabled()
+    overlayController?.update(for: .idle, enabled: true)
+    Task { [weak self] in
+      await self?.model.recording.dismissTake()
     }
   }
 
   private func hotkeyReleased() {
     let startedThisPress = pressStartedRecording
-    let pressStartedAt = pressAt
-    pressStartedRecording = false
-    pressAt = nil
+    let elapsed = pressAt.map { Date().timeIntervalSince($0) } ?? 0
 
-    // Disarm Space once the initiating key is up — after lock, typing Space
-    // must go to the focused app. Latch covers the race where Space was hit
-    // but MainActor hasn't applied isHandsFreeLocked yet.
     let wasLocked =
       model.recording.isHandsFreeLocked || hotkey.isSpaceLockLatched
     hotkey.setSpaceLockArmed(false)
@@ -259,52 +283,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if !model.recording.isHandsFreeLocked {
         model.recording.setHandsFreeLocked(true)
       }
+      liveKind = .tap
+      pressStartedRecording = false
+      holdClassifyTask?.cancel()
+      return
     }
 
-    guard startedThisPress else { return }
-    // Space locked the take: keep listening after the hotkey comes up.
-    guard !wasLocked else { return }
+    let action = DictationGesturePolicy.releaseAction(
+      startedThisPress: startedThisPress,
+      liveKind: liveKind,
+      holdEnabled: model.settings.holdIsPushToTalk,
+      tapEnabled: model.settings.tapStartsHandsFree,
+      elapsed: elapsed,
+      isLocked: false
+    )
+    pressStartedRecording = false
+    holdClassifyTask?.cancel()
+    holdClassifyTask = nil
 
-    let settings = model.settings
-    let isHoldStyle: Bool
-    if settings.hotkey.kind == .modifierHold {
-      // Lone modifiers are always hold-to-talk when that mode is on.
-      isHoldStyle = settings.holdIsPushToTalk
-    } else if !settings.holdIsPushToTalk {
-      // Tap-only: release never stops; second press does.
-      isHoldStyle = false
-    } else if !settings.tapStartsHandsFree {
-      // Hold-only: any press stops on release.
-      isHoldStyle = true
-    } else if let pressStartedAt {
-      isHoldStyle = Date().timeIntervalSince(pressStartedAt) >= pushToTalkThreshold
-    } else {
-      isHoldStyle = false
-    }
-    guard isHoldStyle else { return }
-
-    playStopCueIfEnabled()
-
-    pendingReleaseTask?.cancel()
-    let grace = releaseGraceNanoseconds
-    pendingReleaseTask = Task { [weak self] in
-      try? await Task.sleep(nanoseconds: grace)
-      guard let self, !Task.isCancelled else { return }
-      self.pendingReleaseTask = nil
-      guard !self.model.recording.isHandsFreeLocked else {
-        // Locked during the grace window — bring the plate back.
-        if self.model.settings.showRecordingOverlay {
-          self.overlayController?.update(for: .recording, enabled: true)
-        }
-        return
-      }
-      await self.model.recording.requestStop()
-      if !self.model.recording.phase.isBusy {
-        self.overlayController?.update(
-          for: self.model.recording.phase,
-          enabled: self.model.settings.showRecordingOverlay
-        )
-      }
+    switch action {
+    case .ignore:
+      break
+    case .becomeTap:
+      liveKind = .tap
+    case .endHold:
+      endTakeFromGesture()
     }
   }
 
@@ -330,11 +333,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       hotkey.setSpaceLockArmed(false)
       hotkey.noteHandsFreeLocked()
       model.recording.setHandsFreeLocked(true)
+      liveKind = .tap
+      pressStartedRecording = false
+      holdClassifyTask?.cancel()
       // This press is done — release must not PTT-stop, and the next press
       // must be free to finish.
-      pressStartedRecording = false
-      pressAt = nil
-      // Always surface the plate when locking — otherwise orange icon with no UI.
+      pressAt = pressAt ?? Date()
       overlayController?.update(for: .recording, enabled: true)
     }
   }
@@ -606,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         if !phase.isBusy {
           pressStartedRecording = false
-          pressAt = nil
+          liveKind = .unclassified
         }
       }
       .store(in: &subscriptions)

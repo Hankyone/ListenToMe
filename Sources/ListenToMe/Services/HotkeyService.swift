@@ -145,6 +145,8 @@ final class HotkeyService {
   var tapStartsHandsFree: () -> Bool = { true }
   /// When false, modifier holds never auto-start after the confirm delay.
   var holdIsPushToTalk: () -> Bool = { true }
+  /// True when `onPress` came from a confirmed modifier hold, not a tap.
+  private(set) var pressWasHoldConfirm = false
 
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
@@ -249,10 +251,12 @@ final class HotkeyService {
           if isPrimaryKeyHeld() {
             return
           }
+          pressWasHoldConfirm = false
           onPress?()
           return
         }
         comboIsDown = true
+        pressWasHoldConfirm = false
         onPress?()
       } else if kind == UInt32(kEventHotKeyReleased) {
         guard comboIsDown else { return }
@@ -264,7 +268,7 @@ final class HotkeyService {
     }
   }
 
-  private func isPrimaryKeyHeld() -> Bool {
+  func isPrimaryKeyHeld() -> Bool {
     guard let spec else { return false }
     return CGEventSource.keyState(
       .hidSystemState,
@@ -413,6 +417,7 @@ final class HotkeyService {
         onRelease?()
       } else if wasPending, tapStartsHandsFree(), !sessionControlsActive {
         // Released before the hold confirm — treat as a tap: start hands-free.
+        pressWasHoldConfirm = false
         onPress?()
       }
     }
@@ -425,6 +430,7 @@ final class HotkeyService {
     if sessionControlsActive {
       holdCandidateIsPending = false
       holdIsActive = true
+      pressWasHoldConfirm = false
       onPress?()
       return
     }
@@ -449,12 +455,14 @@ final class HotkeyService {
         self.holdCandidateIsPending = false
         self.holdIsActive = true
         self.holdStartedThisPress = true
+        self.pressWasHoldConfirm = true
         self.onPress?()
       }
     } else if wantsTap {
       // Tap-only modifier: start immediately on down.
       holdIsActive = true
       holdStartedThisPress = true
+      pressWasHoldConfirm = false
       onPress?()
     }
   }

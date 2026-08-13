@@ -3,98 +3,184 @@ import XCTest
 @testable import ListenToMe
 
 final class HotkeyTakePolicyTests: XCTestCase {
-  func testIdlePressAlwaysStarts() {
-    for pending in [false, true] {
-      XCTAssertEqual(
-        HotkeyTakePolicy.actionForPress(phase: .idle, pendingReleaseStop: pending),
-        .start
-      )
-      XCTAssertEqual(
-        HotkeyTakePolicy.actionForPress(phase: .failed, pendingReleaseStop: pending),
-        .start
-      )
-      XCTAssertEqual(
-        HotkeyTakePolicy.actionForPress(
-          phase: .delivered(.pasted),
-          pendingReleaseStop: pending
-        ),
-        .start
-      )
-    }
-  }
-
-  func testLivePressAlwaysStops() {
+  func testIdlePressStarts() {
     XCTAssertEqual(
-      HotkeyTakePolicy.actionForPress(phase: .recording, pendingReleaseStop: false),
-      .stop
-    )
-    XCTAssertEqual(
-      HotkeyTakePolicy.actionForPress(phase: .connecting, pendingReleaseStop: false),
-      .stop
-    )
-  }
-
-  func testReleaseBounceDoesNotStopALiveTake() {
-    XCTAssertEqual(
-      HotkeyTakePolicy.actionForPress(phase: .recording, pendingReleaseStop: true),
-      .continueTake
-    )
-  }
-
-  func testFinishingPressStopsTheTake() {
-    XCTAssertEqual(
-      HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: false),
-      .stop
-    )
-    XCTAssertEqual(
-      HotkeyTakePolicy.actionForPress(phase: .finishing, pendingReleaseStop: true),
-      .stop
-    )
-  }
-
-  func testStopBeforeStartMarksTheFlag() {
-    XCTAssertEqual(
-      RecordingStopPolicy.decision(
+      DictationGesturePolicy.pressAction(
         phase: .idle,
-        hasAudioSendTask: false,
-        isMicRecording: false,
-        alreadyRequestedStop: false
+        liveKind: .unclassified,
+        liveElapsed: 0,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: nil
       ),
-      .markStopBeforeStart
+      .start
     )
   }
 
-  func testFirstStopWhileMicIsUpWaitsToFinish() {
+  func testHoldRepeatIsIgnored() {
     XCTAssertEqual(
-      RecordingStopPolicy.decision(
+      DictationGesturePolicy.pressAction(
         phase: .recording,
-        hasAudioSendTask: false,
-        isMicRecording: true,
-        alreadyRequestedStop: false
+        liveKind: .hold,
+        liveElapsed: 1.2,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: nil
       ),
-      .finishAfterConnect
+      .ignore
     )
   }
 
-  func testSecondStopAbortsAStuckStartup() {
+  func testUnclassifiedRepeatIsIgnored() {
     XCTAssertEqual(
-      RecordingStopPolicy.decision(
+      DictationGesturePolicy.pressAction(
         phase: .recording,
-        hasAudioSendTask: false,
-        isMicRecording: true,
-        alreadyRequestedStop: true
+        liveKind: .unclassified,
+        liveElapsed: 0.1,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: nil
       ),
-      .abort
+      .ignore
     )
+  }
+
+  func testQuickRetriggerAfterTapKeepsListening() {
     XCTAssertEqual(
-      RecordingStopPolicy.decision(
+      DictationGesturePolicy.pressAction(
         phase: .recording,
-        hasAudioSendTask: false,
-        isMicRecording: false,
-        alreadyRequestedStop: false
+        liveKind: .tap,
+        liveElapsed: 0.15,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: nil
       ),
-      .abort
+      .ignore
     )
+  }
+
+  func testSecondClickAfterTapStops() {
+    XCTAssertEqual(
+      DictationGesturePolicy.pressAction(
+        phase: .recording,
+        liveKind: .tap,
+        liveElapsed: 0.8,
+        keyPhysicallyDown: true,
+        secondsSinceHoldEnded: nil
+      ),
+      .stop
+    )
+  }
+
+  func testBounceAfterHoldEndIsIgnored() {
+    XCTAssertEqual(
+      DictationGesturePolicy.pressAction(
+        phase: .idle,
+        liveKind: .unclassified,
+        liveElapsed: 0,
+        keyPhysicallyDown: false,
+        secondsSinceHoldEnded: 0.05
+      ),
+      .ignore
+    )
+  }
+
+  func testFinishingPressStops() {
+    XCTAssertEqual(
+      DictationGesturePolicy.pressAction(
+        phase: .finishing,
+        liveKind: .unclassified,
+        liveElapsed: 1,
+        keyPhysicallyDown: false,
+        secondsSinceHoldEnded: nil
+      ),
+      .stop
+    )
+  }
+
+  func testReleaseBeforeThresholdBecomesTap() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .unclassified,
+        holdEnabled: true,
+        tapEnabled: true,
+        elapsed: 0.1,
+        isLocked: false
+      ),
+      .becomeTap
+    )
+  }
+
+  func testReleaseAfterThresholdEndsHold() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .unclassified,
+        holdEnabled: true,
+        tapEnabled: true,
+        elapsed: 0.3,
+        isLocked: false
+      ),
+      .endHold
+    )
+  }
+
+  func testConfirmedHoldReleaseAlwaysEnds() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .hold,
+        holdEnabled: true,
+        tapEnabled: true,
+        elapsed: 0.05,
+        isLocked: false
+      ),
+      .endHold
+    )
+  }
+
+  func testTapReleaseDoesNotEnd() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .tap,
+        holdEnabled: true,
+        tapEnabled: true,
+        elapsed: 0.4,
+        isLocked: false
+      ),
+      .ignore
+    )
+  }
+
+  func testLockedReleaseDoesNotEndHold() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .hold,
+        holdEnabled: true,
+        tapEnabled: true,
+        elapsed: 1,
+        isLocked: true
+      ),
+      .ignore
+    )
+  }
+
+  func testHoldOnlyReleaseEndsEvenIfShort() {
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseAction(
+        startedThisPress: true,
+        liveKind: .unclassified,
+        holdEnabled: true,
+        tapEnabled: false,
+        elapsed: 0.05,
+        isLocked: false
+      ),
+      .endHold
+    )
+  }
+
+  func testTinyTakesSkipTranscription() {
+    XCTAssertTrue(DictationGesturePolicy.shouldSkipTranscription(elapsed: 0.1))
+    XCTAssertFalse(DictationGesturePolicy.shouldSkipTranscription(elapsed: 0.8))
   }
 
   func testLiveStopFinishesAndFinishingRecovers() {
@@ -115,6 +201,30 @@ final class HotkeyTakePolicyTests: XCTestCase {
         alreadyRequestedStop: false
       ),
       .recoverFinishing
+    )
+  }
+
+  func testStopBeforeStartMarksTheFlag() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .idle,
+        hasAudioSendTask: false,
+        isMicRecording: false,
+        alreadyRequestedStop: false
+      ),
+      .markStopBeforeStart
+    )
+  }
+
+  func testFirstStopWhileMicIsUpWaitsToFinishPipeline() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: false,
+        isMicRecording: true,
+        alreadyRequestedStop: false
+      ),
+      .finishAfterConnect
     )
   }
 }

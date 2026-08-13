@@ -1,48 +1,112 @@
 import Foundation
 
-/// What a dictation shortcut press should do. Extra / repeated activations
-/// must not brick the session: idle always starts, live always stops.
+/// What a dictation shortcut press should do.
 enum HotkeyTakeAction: Equatable {
   case start
   case stop
-  case continueTake
+  case ignore
 }
 
-enum HotkeyTakePolicy {
-  static func actionForPress(
+enum DictationLiveKind: Equatable {
+  /// Key is down; click vs hold not decided yet.
+  case unclassified
+  /// Released before the hold threshold — listening until the next click.
+  case tap
+  /// Crossed the hold threshold — release always ends the take.
+  case hold
+}
+
+enum DictationReleaseAction: Equatable {
+  case ignore
+  case becomeTap
+  case endHold
+}
+
+/// Click vs hold, plus when a take is too short to bother transcribing.
+enum DictationGesturePolicy {
+  /// Still down past this → hold. Short enough that a spoken word on PTT
+  /// is a hold, not a tap that leaves the plate up.
+  static let holdThreshold: TimeInterval = 0.22
+  /// After a tap-start, a second click this soon is "I meant to use it",
+  /// not "I'm done".
+  static let tapRetriggerGrace: TimeInterval = 0.40
+  /// After a hold ends, ignore bounce presses so we don't start a new take.
+  static let holdEndIgnoreWindow: TimeInterval = 0.16
+  /// Shorter than this: dismiss, skip the transcription pipeline.
+  static let minTranscribeDuration: TimeInterval = 0.20
+
+  static func pressAction(
     phase: RecordingPhase,
-    pendingReleaseStop: Bool
+    liveKind: DictationLiveKind,
+    liveElapsed: TimeInterval,
+    keyPhysicallyDown: Bool,
+    secondsSinceHoldEnded: TimeInterval?
   ) -> HotkeyTakeAction {
-    if pendingReleaseStop {
-      switch phase {
-      case .recording, .connecting:
-        return .continueTake
-      default:
-        break
-      }
+    if let elapsed = secondsSinceHoldEnded, elapsed < holdEndIgnoreWindow {
+      return .ignore
     }
 
     switch phase {
     case .idle, .delivered, .failed:
       return .start
-    case .recording, .connecting, .finishing:
+    case .finishing:
       return .stop
+    case .connecting, .recording:
+      break
     }
+
+    if liveKind == .hold, keyPhysicallyDown {
+      return .ignore
+    }
+    if liveKind == .unclassified, keyPhysicallyDown {
+      return .ignore
+    }
+    if liveKind == .tap, liveElapsed < tapRetriggerGrace {
+      return .ignore
+    }
+    return .stop
+  }
+
+  static func releaseAction(
+    startedThisPress: Bool,
+    liveKind: DictationLiveKind,
+    holdEnabled: Bool,
+    tapEnabled: Bool,
+    elapsed: TimeInterval,
+    isLocked: Bool
+  ) -> DictationReleaseAction {
+    guard startedThisPress, !isLocked else { return .ignore }
+
+    switch liveKind {
+    case .tap:
+      return .ignore
+    case .hold:
+      return holdEnabled ? .endHold : .ignore
+    case .unclassified:
+      if holdEnabled, elapsed >= holdThreshold {
+        return .endHold
+      }
+      if tapEnabled {
+        return .becomeTap
+      }
+      if holdEnabled {
+        return .endHold
+      }
+      return .ignore
+    }
+  }
+
+  static func shouldSkipTranscription(elapsed: TimeInterval) -> Bool {
+    elapsed < minTranscribeDuration
   }
 }
 
-/// How `requestStop` should tear down a take. A live stop must never no-op
-/// just because the websocket isn't up yet — that left the overlay stuck.
+/// How `requestStop` should tear down a take that is worth transcribing.
 enum RecordingStopDecision: Equatable {
-  /// Websocket is streaming — commit and transcribe.
   case finishLive
-  /// Mic is already writing; let `start()` call `stop()` once the socket is up.
   case finishAfterConnect
-  /// Nothing to keep — drop the half-open take and hide the overlay.
   case abort
-  /// Hung or in-flight finish — recover so the plate can go away.
   case recoverFinishing
-  /// `start()` hasn't painted `.recording` yet; don't let it begin.
   case markStopBeforeStart
 }
 

@@ -64,13 +64,10 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func toggle() async {
-    switch HotkeyTakePolicy.actionForPress(phase: phase, pendingReleaseStop: false) {
-    case .start:
+    if phase.isBusy {
+      await dismissTake()
+    } else {
       await start()
-    case .stop:
-      await requestStop()
-    case .continueTake:
-      break
     }
   }
 
@@ -215,6 +212,26 @@ final class RecordingCoordinator: ObservableObject {
   func prepareForNextTake() {
     prepareMicrophone()
     prepareRealtimeSession()
+  }
+
+  /// Gesture-driven end: hide is the caller's job. Tiny takes skip
+  /// transcription; otherwise finish even if the websocket is still coming up.
+  func dismissTake() async {
+    let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+    if DictationGesturePolicy.shouldSkipTranscription(elapsed: elapsed) {
+      stopRequestedWhileStarting = true
+      takeID += 1
+      switch phase {
+      case .recording, .connecting:
+        await abortIncompleteStart()
+      case .finishing:
+        await recoverToIdle()
+      default:
+        break
+      }
+      return
+    }
+    await requestStop()
   }
 
   /// Stop that is safe to call from the hotkey even while `start()` is still

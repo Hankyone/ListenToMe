@@ -1,3 +1,3 @@
-## ListenToMe 0.3.48
+## ListenToMe 0.3.49
 
-- The listening plate can no longer stick on screen: a second hotkey press, Escape, or a click on the plate always dismisses it, including while a take is still starting or finishing
+- Hold-to-talk now ends the moment you release — the plate goes away immediately, and takes shorter than a fraction of a second skip transcription. A tap still keeps listening until a later click; a bounce right after a tap does not cancel the take
