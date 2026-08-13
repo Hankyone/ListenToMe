@@ -30,7 +30,7 @@ final class VocabularyTests: XCTestCase {
     XCTAssertTrue(configuration.prompt.contains("cloud"))
     XCTAssertTrue(configuration.prompt.contains("Claude (cloud)"))
     XCTAssertFalse(configuration.prompt.contains("also heard as"))
-    XCTAssertTrue(configuration.prompt.contains("never insert unspoken"))
+    XCTAssertTrue(configuration.prompt.contains("If spoken, spell:"))
     XCTAssertEqual(configuration.keywords, ["Claude"])
   }
 
@@ -73,18 +73,20 @@ final class VocabularyTests: XCTestCase {
     XCTAssertTrue(configuration.prompt.contains("scratch that"))
     XCTAssertTrue(configuration.prompt.contains("I mean"))
     XCTAssertTrue(configuration.prompt.contains("restatement"))
-    XCTAssertTrue(configuration.prompt.contains("Drop the cue"))
+    XCTAssertTrue(configuration.prompt.contains("omit the cue"))
   }
 
-  func testDefaultBasePromptMentionsPunctuationIsNotSpoken() {
-    XCTAssertTrue(
-      WritingGuidance.defaultBasePrompt
-        .localizedCaseInsensitiveContains("punctuation")
-    )
-    XCTAssertTrue(
-      WritingGuidance.defaultBasePrompt
-        .localizedCaseInsensitiveContains("unspoken")
-    )
+  func testDefaultBasePromptSpecifiesWrittenFormNotALecture() {
+    let prompt = WritingGuidance.defaultBasePrompt.lowercased()
+    XCTAssertTrue(prompt.contains("punctuation"))
+    XCTAssertTrue(prompt.contains("caret"))
+    XCTAssertTrue(prompt.contains("homophones") || prompt.contains("destination"))
+    XCTAssertTrue(prompt.contains("trailing space"))
+    XCTAssertTrue(prompt.contains("keep like"))
+    XCTAssertTrue(prompt.contains("user@host"))
+    XCTAssertFalse(prompt.contains("don't invent"))
+    XCTAssertFalse(prompt.contains("do not invent"))
+    XCTAssertFalse(prompt.contains("unspoken"))
   }
 
   func testPromptStaysWithinRealtimeCharacterLimitForLongAppNames() {

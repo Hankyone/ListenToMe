@@ -77,7 +77,7 @@ struct VocabularyView: View {
             }
           }
         Text(
-          "Saves as you type. Sent with every dictation, along with your custom words and the app you are speaking into."
+          "Saves as you type. Sent to the live model with your custom words and the app in focus."
         )
         .font(.system(size: 11))
         .foregroundStyle(AppTheme.faintText)

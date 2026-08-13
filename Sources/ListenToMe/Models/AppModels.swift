@@ -241,14 +241,14 @@ enum OpenAIService {
 
 enum WritingGuidance {
   static let defaultBasePrompt = """
-    Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, you know). Prefer listed spellings. If typing in place, end with one space.
+    One speaker, live, inserting at the caret. Written English at the insertion point: sentence case; standard punctuation; Arabic numerals (42, 3.14, 1,000) unless the words themselves are the content; emails, URLs, and paths as user@host and https://..., not spoken at/dot/slash. Drop um, uh, er; keep like, you know, so, well when they belong in the sentence. Keep wording, order, and register. Homophones follow the destination app and listed spellings. End with one trailing space, never a newline.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines)
 
   /// Spoken "scratch that" / "I mean" so the model rewrites instead of
   /// transcribing the cue words. Always appended; not user-editable.
   static let correctionPrompt = """
-    If they say correction, scratch that, or I mean, replace the last phrase with the restatement. Drop the cue and the discarded words.
+    Spoken revision — correction, scratch that, or I mean: emit only the restatement of the immediately preceding phrase; omit the cue and the discarded span.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -260,6 +260,10 @@ enum WritingGuidance {
     .trimmingCharacters(in: .whitespacesAndNewlines),
     """
     Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, like, you know). Prefer listed spellings. If typing in place, end with one space.
+    """
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+    """
+    Polish dictation lightly. Keep meaning and wording; don't invent. Add punctuation and capitalization (unspoken). Strip filler (um, uh, er, you know). Prefer listed spellings. If typing in place, end with one space.
     """
     .trimmingCharacters(in: .whitespacesAndNewlines),
   ]
@@ -294,7 +298,7 @@ struct TranscriptionConfiguration: Equatable, Sendable {
       .trimmingCharacters(in: .whitespacesAndNewlines),
       !appName.isEmpty
     {
-      appLine = "Dictating into \(appName)."
+      appLine = "Destination: \(appName)."
     } else {
       appLine = nil
     }
@@ -315,7 +319,7 @@ struct TranscriptionConfiguration: Equatable, Sendable {
       wordsLine = nil
     } else {
       wordsLine =
-        "Spellings (hints; never insert unspoken): \(wordGuidance)."
+        "If spoken, spell: \(wordGuidance)."
     }
 
     return Self.clampedPrompt(
