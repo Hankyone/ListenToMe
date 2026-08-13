@@ -17,9 +17,10 @@ final class MediaPauseService: @unchecked Sendable {
   /// Bumped on each begin/end so a late begin can't clobber a finished take.
   private var generation: UInt64 = 0
 
-  func begin() {
+  func begin(onFinished: (() -> Void)? = nil) {
     queue.async { [weak self] in
       self?.beginSync()
+      onFinished?()
     }
   }
 

@@ -52,6 +52,7 @@ final class RecordingCoordinator: ObservableObject {
   /// Bumped on start/stop so an in-flight `start()` cannot open the mic after
   /// a later press already asked to stop.
   private var takeID = 0
+  private var latency: TakeLatencyTrace?
 
   init(
     settings: SettingsStore,
@@ -71,6 +72,22 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
+  func noteHotkeyPress() {
+    latency = TakeLatencyTrace()
+    latency?.mark("hotkey")
+  }
+
+  func markLatency(_ name: String) {
+    latency?.mark(name)
+  }
+
+  private func finishLatency(_ reason: String) {
+    guard let latency else { return }
+    latency.note("end", reason)
+    LatencyLog.write(latency.finish())
+    self.latency = nil
+  }
+
   func start() async {
     if phase == .finishing {
       await recoverToIdle()
@@ -78,11 +95,16 @@ final class RecordingCoordinator: ObservableObject {
     guard !phase.isBusy else { return }
     if stopRequestedWhileStarting {
       stopRequestedWhileStarting = false
+      finishLatency("aborted_before_start")
       return
     }
 
     takeID += 1
     let id = takeID
+    if latency == nil {
+      latency = TakeLatencyTrace()
+    }
+    latency?.mark("start")
 
     // Paint live UI first. Never run AppleScript / engine.start / TLS on the
     // main thread  -  that froze the overlay at 0:00 with a dead waveform.
@@ -101,9 +123,12 @@ final class RecordingCoordinator: ObservableObject {
     startedAt = now
     listenStartedAt = now
     phase = .recording
+    latency?.mark("ui")
     startElapsedTimer()
-    // Duck media off-main immediately (was blocking MainActor 5–8s via AppleScript).
-    mediaPause.begin()
+    let trace = latency
+    mediaPause.begin {
+      trace?.mark("media_pause")
+    }
     await Task.yield()
     guard id == takeID else {
       await abortIncompleteStart()
@@ -272,6 +297,7 @@ final class RecordingCoordinator: ObservableObject {
   func stop() async {
     takeID += 1
     guard phase == .recording else { return }
+    latency?.mark("stop")
     phase = .finishing
     if let startedAt {
       elapsed = Date().timeIntervalSince(startedAt)
@@ -288,6 +314,7 @@ final class RecordingCoordinator: ObservableObject {
     if let remainder = await audioCapture.stop() {
       audioContinuation?.yield(remainder)
     }
+    latency?.mark("mic_stopped")
     audioContinuation?.finish()
     audioContinuation = nil
 
@@ -304,6 +331,7 @@ final class RecordingCoordinator: ObservableObject {
 
     do {
       try await client?.commit()
+      latency?.mark("commit")
     } catch {
       await finishWithBestAvailableTranscript()
       return
@@ -375,13 +403,13 @@ final class RecordingCoordinator: ObservableObject {
       bufferingPolicy: .unbounded
     )
     audioContinuation = streamPair.continuation
+    let trace = latency
 
-    // Mic first on the hardware queue  -  waveform is local and must not wait
-    // on standby claim / websocket work.
     try await audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
       onPCMChunk: { [weak self] data in
+        trace?.mark("first_pcm")
         self?.audioContinuation?.yield(data)
       },
       onLevel: { [weak self] level in
@@ -395,6 +423,7 @@ final class RecordingCoordinator: ObservableObject {
         }
       }
     )
+    trace?.mark("mic")
 
     let claimed = await claimStandbyClient(matching: configuration)
     let client: RealtimeTranscriptionClient
@@ -402,14 +431,15 @@ final class RecordingCoordinator: ObservableObject {
     if let claimed {
       client = claimed
       needsConnect = false
+      trace?.note("path", "warm")
+      trace?.mark("socket_warm")
     } else {
       client = RealtimeTranscriptionClient(apiKey: apiKey)
       needsConnect = true
+      trace?.note("path", "cold")
     }
     self.client = client
 
-    // Warm path: socket already session-ready → stream audio immediately.
-    // Cold path: connect off MainActor while mic already feeds the waveform.
     audioSendTask = Task.detached(priority: .userInitiated) { [weak self] in
       do {
         if needsConnect {
@@ -417,16 +447,23 @@ final class RecordingCoordinator: ObservableObject {
             [weak self] event in
             self?.handle(event)
           }
+          trace?.mark("socket_ready")
         } else {
           await client.setEventHandler { [weak self] event in
             self?.handle(event)
           }
           Task.detached {
             try? await client.refreshSession(configuration: configuration)
+            trace?.mark("session_refresh")
           }
         }
+        var sentFirst = false
         for await chunk in streamPair.stream {
           try Task.checkCancellation()
+          if !sentFirst {
+            sentFirst = true
+            trace?.mark("first_append")
+          }
           try await client.appendAudio(chunk)
         }
       } catch is CancellationError {
@@ -570,6 +607,8 @@ final class RecordingCoordinator: ObservableObject {
 
   private func stopBatchTranscription() async {
     _ = await audioCapture.stop()
+    latency?.mark("mic_stopped")
+    latency?.note("fallback", "file")
 
     guard let recordingURL else {
       await persistFailedTake(message: "The recording file was missing.")
@@ -591,12 +630,14 @@ final class RecordingCoordinator: ObservableObject {
     configuration.targetAppName = targetApplication?.name
 
     do {
+      latency?.mark("file_transcribe")
       let text = try await FileTranscriptionService.transcribe(
         audioURL: recordingURL,
         apiKey: apiKey,
         prompt: configuration.prompt,
         languages: configuration.languages
       )
+      latency?.mark("completed")
       await finalize(transcript: text)
     } catch {
       if Self.isBenignEmptyTake(error.localizedDescription),
@@ -612,14 +653,16 @@ final class RecordingCoordinator: ObservableObject {
   private func handle(_ event: TranscriptionClientEvent) {
     switch event {
     case .sessionReady:
-      break
+      latency?.mark("session_ready")
 
     case .delta(_, let text):
       guard phase == .recording || phase == .finishing else { return }
+      latency?.mark("first_text")
       liveDraft.applyDelta(text)
 
     case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
+      latency?.mark("completed")
       liveDraft.applyCompleted(transcript)
       Task {
         await finalize(transcript: transcript)
@@ -686,6 +729,7 @@ final class RecordingCoordinator: ObservableObject {
 
     await recycleOrDropClient()
 
+    latency?.mark("paste")
     var outcome = await delivery.deliver(finalText, to: targetApplication)
     if outcome == .copiedNoAccessibility {
       // Last-chance recovery if TCC flipped mid-session or trust was stale.
@@ -708,6 +752,8 @@ final class RecordingCoordinator: ObservableObject {
     )
     history.add(entry)
     onHistoryEntryCreated?(entry.id)
+    latency?.mark("pasted")
+    finishLatency("delivered")
 
     liveDraft.applyCompleted(finalText)
     isHandsFreeLocked = false
@@ -749,6 +795,7 @@ final class RecordingCoordinator: ObservableObject {
   private func detachLiveTranscription() {
     liveStreamDetached = true
     usesBatchTranscription = true
+    latency?.note("live", "detached")
     audioContinuation?.finish()
     audioContinuation = nil
     audioSendTask?.cancel()
@@ -828,6 +875,7 @@ final class RecordingCoordinator: ObservableObject {
     phase = .idle
     teardownSession()
     resetRecordingReferences()
+    finishLatency("cancel")
     prepareForNextTake()
   }
 
@@ -862,6 +910,7 @@ final class RecordingCoordinator: ObservableObject {
     phase = .failed
     teardownSession()
     resetRecordingReferences()
+    finishLatency("failed")
     prepareForNextTake()
   }
 
@@ -878,6 +927,7 @@ final class RecordingCoordinator: ObservableObject {
     var configuration = settings.transcriptionConfiguration
     configuration.targetAppName = targetApplication?.name
     do {
+      latency?.mark("file_transcribe")
       return try await FileTranscriptionService.transcribe(
         audioURL: recordingURL,
         apiKey: apiKey,
@@ -949,6 +999,7 @@ final class RecordingCoordinator: ObservableObject {
     if phase.isBusy {
       abandonQuietly()
     }
+    finishLatency("recover")
   }
 
   /// `start()` lost the race to a later stop/press. Drop the half-open take
@@ -967,6 +1018,7 @@ final class RecordingCoordinator: ObservableObject {
     discardCurrentRecording()
     teardownSession()
     resetRecordingReferences()
+    finishLatency("aborted")
     prepareForNextTake()
   }
 
@@ -980,6 +1032,7 @@ final class RecordingCoordinator: ObservableObject {
     discardCurrentRecording()
     teardownSession()
     resetRecordingReferences()
+    finishLatency("abandon")
     prepareForNextTake()
   }
 

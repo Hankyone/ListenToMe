@@ -209,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func beginTakeFromGesture() {
+    model.recording.noteHotkeyPress()
     pressStartedRecording = true
     pressAt = Date()
     holdEndedAt = nil
@@ -226,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     playStartCueIfEnabled()
     if model.settings.showRecordingOverlay {
       overlayController?.update(for: .recording, enabled: true)
+      model.recording.markLatency("overlay")
     }
     hotkey.setSessionControlsActive(true)
     let canSpaceLock =
