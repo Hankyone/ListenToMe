@@ -24,10 +24,11 @@ enum MicrophoneInputCatalog {
   static func listInputs() -> [MicrophoneInput] {
     var devices = [MicrophoneInput.systemDefault()]
     for deviceID in allDeviceIDs() where inputChannelCount(deviceID) > 0 {
-      let uid = stringProperty(
-        deviceID,
-        selector: kAudioDevicePropertyDeviceUID
-      ) ?? "device-\(deviceID)"
+      let uid =
+        stringProperty(
+          deviceID,
+          selector: kAudioDevicePropertyDeviceUID
+        ) ?? "device-\(deviceID)"
       let name =
         stringProperty(deviceID, selector: kAudioDevicePropertyDeviceNameCFString)
         ?? "Microphone \(deviceID)"
@@ -79,7 +80,7 @@ enum MicrophoneInputCatalog {
     return deviceIDs
   }
 
-  private static func inputChannelCount(_ deviceID: AudioDeviceID) -> Int {
+  static func inputChannelCount(_ deviceID: AudioDeviceID) -> Int {
     var address = AudioObjectPropertyAddress(
       mSelector: kAudioDevicePropertyStreamConfiguration,
       mScope: kAudioDevicePropertyScopeInput,

@@ -1,3 +1,7 @@
+## ListenToMe 0.3.58
+
+- Add a system input-volume slider for the active microphone in Setup, with clear handling for microphones that manage their own gain.
+
 ## ListenToMe 0.3.57
 
 - Add Gemini 3.5 Transcribe for live dictation and imported audio files alongside OpenAI.

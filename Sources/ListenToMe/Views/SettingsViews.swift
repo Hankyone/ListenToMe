@@ -55,6 +55,7 @@ struct SettingsContentView: View {
       )
     ) { _ in
       permissions.refresh()
+      microphones = MicrophoneInputCatalog.listInputs()
     }
   }
 
@@ -196,6 +197,10 @@ struct SettingsContentView: View {
           microphones: microphones
         )
 
+        MicrophoneVolumeControl(
+          deviceUID: settings.preferredMicrophoneUID(from: microphones)
+        )
+
         if settings.selectedProvider == .openAI {
           VStack(alignment: .leading, spacing: 6) {
             Text("Noise reduction")
@@ -262,6 +267,96 @@ struct SettingsContentView: View {
     } catch {
       keyStatus = error.localizedDescription
     }
+  }
+}
+
+private struct MicrophoneVolumeControl: View {
+  let deviceUID: String
+
+  @State private var value = 1.0
+  @State private var snapshot: MicrophoneVolumeSnapshot?
+  @State private var didLoad = false
+  @State private var isEditing = false
+
+  var body: some View {
+    Group {
+      if let snapshot {
+        VStack(alignment: .leading, spacing: 6) {
+          HStack(spacing: 10) {
+            Text("Input volume")
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(AppTheme.primaryText)
+              .frame(width: 84, alignment: .leading)
+
+            Slider(
+              value: Binding(
+                get: { value },
+                set: setVolume
+              ),
+              in: 0...1,
+              step: 0.01,
+              onEditingChanged: { editing in
+                isEditing = editing
+                if !editing { refresh() }
+              }
+            )
+            .frame(maxWidth: 240)
+            .disabled(!snapshot.isWritable)
+            .accessibilityLabel("Microphone input volume")
+            .accessibilityValue(percentage)
+
+            Text(percentage)
+              .font(.system(size: 12, weight: .medium, design: .monospaced))
+              .foregroundStyle(AppTheme.secondaryText)
+              .frame(width: 40, alignment: .trailing)
+          }
+
+          if !snapshot.isWritable {
+            Text("This microphone manages its own input volume.")
+              .font(.system(size: 11))
+              .foregroundStyle(AppTheme.faintText)
+          }
+        }
+      } else if didLoad {
+        Text("This microphone manages its own input volume.")
+          .font(.system(size: 11))
+          .foregroundStyle(AppTheme.faintText)
+      }
+    }
+    .task(id: deviceUID) {
+      didLoad = false
+      refresh()
+      while !Task.isCancelled {
+        do {
+          try await Task.sleep(nanoseconds: 1_000_000_000)
+        } catch {
+          break
+        }
+        if !isEditing { refresh() }
+      }
+    }
+  }
+
+  private var percentage: String {
+    "\(Int((value * 100).rounded()))%"
+  }
+
+  private func setVolume(_ newValue: Double) {
+    value = newValue
+    guard snapshot?.isWritable == true else { return }
+    do {
+      try MicrophoneVolumeService.setScalar(Float(newValue), forUID: deviceUID)
+    } catch {
+      refresh()
+    }
+  }
+
+  private func refresh() {
+    snapshot = MicrophoneVolumeService.snapshot(forUID: deviceUID)
+    if let snapshot {
+      value = Double(snapshot.scalar)
+    }
+    didLoad = true
   }
 }
 
