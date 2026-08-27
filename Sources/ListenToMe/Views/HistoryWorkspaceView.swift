@@ -5,13 +5,17 @@ struct HistoryWorkspaceView: View {
   @Binding var selectedID: UUID?
   @ObservedObject var recording: RecordingCoordinator
   let hotkeyDisplay: String
+  let onImportAudio: () -> Void
+  @State private var isDropTarget = false
 
   var body: some View {
     HSplitView {
       HistoryListView(
         history: history,
         selectedID: $selectedID,
-        hotkeyDisplay: hotkeyDisplay
+        hotkeyDisplay: hotkeyDisplay,
+        isImportingAudio: recording.isImportingAudio,
+        onImportAudio: onImportAudio
       )
       .frame(minWidth: 240, idealWidth: 300, maxWidth: 360)
 
@@ -23,6 +27,24 @@ struct HistoryWorkspaceView: View {
       .frame(minWidth: 320)
     }
     .background(AppTheme.background)
+    .overlay(
+      Rectangle()
+        .stroke(
+          isDropTarget ? AppTheme.accent : Color.clear,
+          lineWidth: 2
+        )
+        .allowsHitTesting(false)
+    )
+    .dropDestination(for: URL.self) { urls, _ in
+      guard let url = urls.first,
+        !recording.phase.isBusy,
+        !recording.isImportingAudio
+      else { return false }
+      Task { await recording.importAudio(at: url) }
+      return true
+    } isTargeted: {
+      isDropTarget = $0
+    }
   }
 }
 
@@ -30,6 +52,8 @@ private struct HistoryListView: View {
   @ObservedObject var history: HistoryStore
   @Binding var selectedID: UUID?
   let hotkeyDisplay: String
+  let isImportingAudio: Bool
+  let onImportAudio: () -> Void
   @State private var query = ""
 
   private var visibleEntries: [HistoryEntry] {
@@ -43,6 +67,16 @@ private struct HistoryListView: View {
           .font(.system(size: 24, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
         Spacer()
+        Button(action: onImportAudio) {
+          Image(systemName: isImportingAudio ? "ellipsis" : "waveform.badge.plus")
+            .frame(width: 18, height: 18)
+        }
+        .buttonStyle(QuietButtonStyle())
+        .disabled(isImportingAudio)
+        .help(isImportingAudio ? "Transcribing audio" : "Transcribe audio file")
+        .accessibilityLabel(
+          isImportingAudio ? "Transcribing audio" : "Transcribe audio file"
+        )
         Text("\(visibleEntries.count)")
           .font(.system(size: 12, weight: .medium, design: .monospaced))
           .foregroundStyle(AppTheme.faintText)
@@ -62,7 +96,11 @@ private struct HistoryListView: View {
       }
 
       if history.entries.isEmpty {
-        EmptyHistoryView(hotkeyDisplay: hotkeyDisplay)
+        EmptyHistoryView(
+          hotkeyDisplay: hotkeyDisplay,
+          isImportingAudio: isImportingAudio,
+          onImportAudio: onImportAudio
+        )
       } else if visibleEntries.isEmpty {
         Text("No matching transcripts")
           .font(.system(size: 13))
@@ -115,10 +153,11 @@ private struct HistoryListView: View {
                   Button("Move Recording to Trash", role: .destructive) {
                     history.remove(id: entry.id)
                     if selectedID == entry.id {
-                      selectedID = HistorySearch.matching(
-                        history.entries,
-                        query: query
-                      ).first?.id
+                      selectedID =
+                        HistorySearch.matching(
+                          history.entries,
+                          query: query
+                        ).first?.id
                     }
                   }
                 }
@@ -176,6 +215,8 @@ private struct HistoryRow: View {
 
 private struct EmptyHistoryView: View {
   let hotkeyDisplay: String
+  let isImportingAudio: Bool
+  let onImportAudio: () -> Void
 
   var body: some View {
     VStack(spacing: 18) {
@@ -185,9 +226,14 @@ private struct EmptyHistoryView: View {
         .font(.system(size: 18, weight: .semibold))
         .foregroundStyle(AppTheme.primaryText)
       Text("Press \(hotkeyDisplay) to dictate.")
-      .font(.system(size: 13))
-      .foregroundStyle(AppTheme.secondaryText)
-      .multilineTextAlignment(.center)
+        .font(.system(size: 13))
+        .foregroundStyle(AppTheme.secondaryText)
+        .multilineTextAlignment(.center)
+      Button(isImportingAudio ? "Transcribing…" : "Transcribe Audio…") {
+        onImportAudio()
+      }
+      .buttonStyle(RecordActionButtonStyle())
+      .disabled(isImportingAudio)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(28)

@@ -1,8 +1,17 @@
+import AVFoundation
 import AppKit
 import Foundation
 
 @MainActor
 final class HistoryStore: ObservableObject {
+  enum ImportError: LocalizedError {
+    case unreadableAudio
+
+    var errorDescription: String? {
+      "Choose an audio file that macOS can play."
+    }
+  }
+
   /// Recordings older than this are removed on launch.
   nonisolated static let retentionDays = 30
 
@@ -49,6 +58,32 @@ final class HistoryStore: ObservableObject {
       recordingsURL
       .appendingPathComponent(UUID().uuidString)
       .appendingPathExtension("caf")
+  }
+
+  func importRecording(from sourceURL: URL) throws -> URL {
+    guard (try? AVAudioFile(forReading: sourceURL)) != nil else {
+      throw ImportError.unreadableAudio
+    }
+    try FileManager.default.createDirectory(
+      at: recordingsURL,
+      withIntermediateDirectories: true
+    )
+    let sourceExtension = sourceURL.pathExtension
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    let destination =
+      recordingsURL
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension(sourceExtension.isEmpty ? "caf" : sourceExtension)
+    try FileManager.default.copyItem(at: sourceURL, to: destination)
+    return destination
+  }
+
+  static func audioDuration(at url: URL) -> TimeInterval {
+    guard let file = try? AVAudioFile(forReading: url),
+      file.processingFormat.sampleRate > 0
+    else { return 0 }
+    return Double(file.length) / file.processingFormat.sampleRate
   }
 
   func add(_ entry: HistoryEntry) {
@@ -113,7 +148,7 @@ final class HistoryStore: ObservableObject {
     guard FileManager.default.fileExists(atPath: url.path) else { return false }
     let size =
       (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]
-        as? NSNumber)?.int64Value ?? 0
+      as? NSNumber)?.int64Value ?? 0
     return size > minimumPreservableAudioBytes
   }
 

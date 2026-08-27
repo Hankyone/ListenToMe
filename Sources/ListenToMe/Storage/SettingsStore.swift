@@ -4,6 +4,10 @@ import Foundation
 final class SettingsStore: ObservableObject {
   static let defaultBasePrompt = WritingGuidance.defaultBasePrompt
 
+  @Published var selectedProvider: TranscriptionProvider {
+    didSet { defaults.set(selectedProvider.rawValue, forKey: Keys.selectedProvider) }
+  }
+
   @Published var showRecordingOverlay: Bool {
     didSet { defaults.set(showRecordingOverlay, forKey: Keys.showRecordingOverlay) }
   }
@@ -69,12 +73,14 @@ final class SettingsStore: ObservableObject {
     didSet { persistVocabulary() }
   }
 
-  @Published private(set) var hasAPIKey: Bool = false
+  @Published private(set) var hasOpenAIAPIKey: Bool = false
+  @Published private(set) var hasGeminiAPIKey: Bool = false
 
   private let defaults: UserDefaults
   private let apiKeys: APIKeyStore
 
   private enum Keys {
+    static let selectedProvider = "transcription.provider"
     static let showRecordingOverlay = "appearance.showRecordingOverlay"
     static let overlayLayout = "appearance.overlayLayout"
     static let playDictationSounds = "appearance.playDictationSounds"
@@ -97,6 +103,10 @@ final class SettingsStore: ObservableObject {
   ) {
     self.defaults = defaults
     self.apiKeys = apiKeys
+    selectedProvider =
+      TranscriptionProvider(
+        rawValue: defaults.string(forKey: Keys.selectedProvider) ?? ""
+      ) ?? .openAI
     showRecordingOverlay =
       defaults.object(forKey: Keys.showRecordingOverlay) as? Bool
       ?? true
@@ -169,12 +179,13 @@ final class SettingsStore: ObservableObject {
       vocabulary = []
     }
 
-    // File presence only  -  never load the secret at launch.
-    hasAPIKey = apiKeys.hasStoredKey()
+    // File presence only. Never load either secret at launch.
+    hasOpenAIAPIKey = apiKeys.hasStoredKey(for: .openAI)
+    hasGeminiAPIKey = apiKeys.hasStoredKey(for: .gemini)
   }
 
   var languageHints: LanguageHintValidation.Result {
-    LanguageHintValidation.parse(languageText)
+    LanguageHintValidation.parse(languageText, provider: selectedProvider)
   }
 
   /// Codes actually sent to the API (invalid tokens omitted).
@@ -187,12 +198,17 @@ final class SettingsStore: ObservableObject {
   func normalizeLanguageTextIfNeeded() -> LanguageHintValidation.Result {
     let parsed = LanguageHintValidation.parse(
       languageText,
+      provider: selectedProvider,
       finalizePending: true
     )
     if parsed.normalizedText != languageText {
       languageText = parsed.normalizedText
     }
-    return LanguageHintValidation.parse(languageText, finalizePending: true)
+    return LanguageHintValidation.parse(
+      languageText,
+      provider: selectedProvider,
+      finalizePending: true
+    )
   }
 
   var transcriptionConfiguration: TranscriptionConfiguration {
@@ -206,7 +222,7 @@ final class SettingsStore: ObservableObject {
   }
 
   var selectedEngineIsReady: Bool {
-    hasAPIKey
+    hasAPIKey(for: selectedProvider)
   }
 
   /// First microphone in the priority list that is currently attached (or System Default).
@@ -267,22 +283,42 @@ final class SettingsStore: ObservableObject {
     basePrompt = Self.defaultBasePrompt
   }
 
-  func loadAPIKey() throws -> String {
-    let value = try apiKeys.loadAPIKey() ?? ""
+  func hasAPIKey(for provider: TranscriptionProvider) -> Bool {
+    switch provider {
+    case .openAI: hasOpenAIAPIKey
+    case .gemini: hasGeminiAPIKey
+    }
+  }
+
+  func loadAPIKey(for provider: TranscriptionProvider? = nil) throws -> String {
+    let provider = provider ?? selectedProvider
+    let value = try apiKeys.loadAPIKey(for: provider) ?? ""
     let present = !value.isEmpty
-    if hasAPIKey != present {
-      hasAPIKey = present
+    switch provider {
+    case .openAI:
+      if hasOpenAIAPIKey != present { hasOpenAIAPIKey = present }
+    case .gemini:
+      if hasGeminiAPIKey != present { hasGeminiAPIKey = present }
     }
     return value
   }
 
-  func saveAPIKey(_ value: String) throws {
-    try apiKeys.saveAPIKey(value)
-    hasAPIKey = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  func saveAPIKey(
+    _ value: String,
+    for provider: TranscriptionProvider? = nil
+  ) throws {
+    let provider = provider ?? selectedProvider
+    try apiKeys.saveAPIKey(value, for: provider)
+    let present = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    switch provider {
+    case .openAI: hasOpenAIAPIKey = present
+    case .gemini: hasGeminiAPIKey = present
+    }
   }
 
   func refreshAPIKeyPresence() {
-    hasAPIKey = apiKeys.hasStoredKey()
+    hasOpenAIAPIKey = apiKeys.hasStoredKey(for: .openAI)
+    hasGeminiAPIKey = apiKeys.hasStoredKey(for: .gemini)
   }
 
   func addVocabulary(term: String, oftenHeardAs: String) -> Bool {

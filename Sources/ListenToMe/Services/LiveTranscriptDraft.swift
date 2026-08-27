@@ -54,6 +54,18 @@ final class LiveTranscriptDraft {
     publish()
   }
 
+  /// Replaces the current hypothesis. Gemini sends complete interim text,
+  /// unlike OpenAI's append-only delta stream.
+  func applyInterim(_ text: String) {
+    guard !text.isEmpty else { return }
+    buffer = text
+    if !buffer.hasPrefix(committed) {
+      committed = ""
+    }
+    scheduleStabilize()
+    publish()
+  }
+
   /// Final model transcript replaces the draft entirely.
   func applyCompleted(_ transcript: String) {
     stabilizeTask?.cancel()

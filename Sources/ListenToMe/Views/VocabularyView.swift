@@ -23,7 +23,9 @@ struct VocabularyView: View {
             .foregroundStyle(AppTheme.primaryText)
         }
 
-        guidanceSection
+        if settings.selectedProvider == .openAI {
+          guidanceSection
+        }
         responseAndLanguageSection
         customWordsSection
       }
@@ -67,11 +69,11 @@ struct VocabularyView: View {
             .isEmpty
           {
             Text("Optional notes for the live model.")
-            .font(.system(size: 13))
-            .foregroundStyle(AppTheme.faintText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 17)
-            .allowsHitTesting(false)
+              .font(.system(size: 13))
+              .foregroundStyle(AppTheme.faintText)
+              .padding(.horizontal, 14)
+              .padding(.vertical, 17)
+              .allowsHitTesting(false)
           }
         }
         .onChange(of: settings.basePrompt) { _, _ in
@@ -109,19 +111,25 @@ struct VocabularyView: View {
   }
 
   private var responseAndLanguageSection: some View {
-    WordsSection(title: "Response and language") {
+    WordsSection(
+      title: settings.selectedProvider == .openAI
+        ? "Response and language"
+        : "Language"
+    ) {
       VStack(alignment: .leading, spacing: 14) {
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Response")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(AppTheme.primaryText)
-          Picker("Response", selection: $settings.delay) {
-            ForEach(TranscriptionDelay.allCases) { delay in
-              Text(delay.title).tag(delay)
+        if settings.selectedProvider == .openAI {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Response")
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(AppTheme.primaryText)
+            Picker("Response", selection: $settings.delay) {
+              ForEach(TranscriptionDelay.allCases) { delay in
+                Text(delay.title).tag(delay)
+              }
             }
+            .labelsHidden()
+            .pickerStyle(.segmented)
           }
-          .labelsHidden()
-          .pickerStyle(.segmented)
         }
 
         VStack(alignment: .leading, spacing: 6) {
@@ -137,7 +145,9 @@ struct VocabularyView: View {
           .frame(maxWidth: 280)
           Text(
             settings.languageHints.message
-              ?? "ISO codes like en, fr. Not fr-CA."
+              ?? (settings.selectedProvider == .gemini
+                ? "BCP-47 codes like en, fr-CA, or zh-HK."
+                : "ISO codes like en or fr. Not fr-CA.")
           )
           .font(.system(size: 11))
           .foregroundStyle(
@@ -163,11 +173,13 @@ struct VocabularyView: View {
               text: $term,
               onSubmit: addWord
             )
-            ThemedTextField(
-              placeholder: "Other spellings, such as Anwar, Anuar",
-              text: $oftenHeardAs,
-              onSubmit: addWord
-            )
+            if settings.selectedProvider == .openAI {
+              ThemedTextField(
+                placeholder: "Other spellings, such as Anwar, Anuar",
+                text: $oftenHeardAs,
+                onSubmit: addWord
+              )
+            }
           }
 
           Button("Add Word") {
@@ -210,11 +222,13 @@ struct VocabularyView: View {
             text: $editTerm,
             onSubmit: saveEdit
           )
-          ThemedTextField(
-            placeholder: "Other spellings, such as Anwar, Anuar",
-            text: $editHeardAs,
-            onSubmit: saveEdit
-          )
+          if settings.selectedProvider == .openAI {
+            ThemedTextField(
+              placeholder: "Other spellings, such as Anwar, Anuar",
+              text: $editHeardAs,
+              onSubmit: saveEdit
+            )
+          }
         }
         if !editValidationMessage.isEmpty {
           Text(editValidationMessage)
@@ -241,7 +255,9 @@ struct VocabularyView: View {
             Text(item.term)
               .font(.system(size: 14, weight: .semibold))
               .foregroundStyle(AppTheme.primaryText)
-            if !item.oftenHeardAs.isEmpty {
+            if settings.selectedProvider == .openAI,
+              !item.oftenHeardAs.isEmpty
+            {
               Text("Also heard as \(item.oftenHeardAs)")
                 .font(.system(size: 12))
                 .foregroundStyle(AppTheme.secondaryText)
@@ -341,4 +357,3 @@ private struct WordsSection<Content: View>: View {
     }
   }
 }
-

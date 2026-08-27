@@ -1,3 +1,9 @@
+## ListenToMe 0.3.57
+
+- Add Gemini 3.5 Transcribe for live dictation and imported audio files alongside OpenAI.
+- Transcribe audio by dropping it into History, choosing it from History, or using the File menu.
+- Keep languages and vocabulary provider-aware, and stream provider-native audio for lower latency.
+
 ## ListenToMe 0.3.56
 
 - Tall overlay keeps the newest transcript lines in view and leaves the waveform centered while you talk.

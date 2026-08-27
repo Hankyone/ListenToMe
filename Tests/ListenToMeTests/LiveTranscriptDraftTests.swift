@@ -45,6 +45,15 @@ final class LiveTranscriptDraftTests: XCTestCase {
     XCTAssertEqual(draft.snapshot.tentative, "")
   }
 
+  func testInterimReplacesGeminiHypothesis() {
+    let draft = LiveTranscriptDraft(stabilizeDelayNanoseconds: 1_000_000_000)
+    draft.applyInterim("Use Chronicle")
+    draft.applyInterim("Use Chronicle for this")
+
+    XCTAssertEqual(draft.snapshot.display, "Use Chronicle for this")
+    XCTAssertEqual(draft.snapshot.committed, "")
+  }
+
   private func waitUntil(
     timeoutNanoseconds: UInt64,
     pollNanoseconds: UInt64 = 5_000_000,

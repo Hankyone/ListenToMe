@@ -1,6 +1,6 @@
 import Foundation
 
-actor RealtimeTranscriptionClient: TranscriptionClient {
+actor RealtimeTranscriptionClient: ReusableTranscriptionClient {
   static let transcriptionModel = "gpt-live-transcribe"
   static let connectionURL = URL(
     string: "wss://api.openai.com/v1/realtime?intent=transcription"

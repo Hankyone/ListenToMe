@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -47,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     model.onShowMainWindow = { [weak self] in
       self?.historyPanelController?.close()
       self?.showMainWindow()
+    }
+    model.onChooseAudioFile = { [weak self] in
+      self?.chooseAudioFile()
     }
     configureMainMenu()
     configureStatusItem()
@@ -138,13 +142,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
       .store(in: &subscriptions)
 
+    model.settings.$selectedProvider
+      .dropFirst()
+      .removeDuplicates()
+      .sink { [weak self] _ in
+        self?.model.recording.prepareMicrophone()
+      }
+      .store(in: &subscriptions)
+
     // Re-warm the realtime session when dictation settings that affect
     // session.update change.
     Publishers.MergeMany(
       model.settings.$delay.map { _ in () }.eraseToAnyPublisher(),
       model.settings.$micProfile.map { _ in () }.eraseToAnyPublisher(),
       model.settings.$basePrompt.map { _ in () }.eraseToAnyPublisher(),
-      model.settings.$languageText.map { _ in () }.eraseToAnyPublisher()
+      model.settings.$languageText.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$vocabulary.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$selectedProvider.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$hasOpenAIAPIKey.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$hasGeminiAPIKey.map { _ in () }.eraseToAnyPublisher()
     )
     .dropFirst()
     .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
@@ -363,6 +379,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     model.showMainWindow(section: .history)
   }
 
+  @objc private func transcribeAudioFile() {
+    chooseAudioFile()
+  }
+
+  private func chooseAudioFile() {
+    guard !model.recording.phase.isBusy,
+      !model.recording.isImportingAudio
+    else { return }
+    let panel = NSOpenPanel()
+    panel.title = "Transcribe Audio"
+    panel.prompt = "Transcribe"
+    panel.allowedContentTypes = [.audio]
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    model.showMainWindow(section: .history)
+    Task { [weak self] in
+      await self?.model.recording.importAudio(at: url)
+    }
+  }
+
   @objc private func openVocabulary() {
     model.showMainWindow(section: .vocabulary)
   }
@@ -479,6 +517,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       keyEquivalent: "o"
     )
     history.target = self
+    let transcribeAudio = fileMenu.addItem(
+      withTitle: "Transcribe Audio…",
+      action: #selector(transcribeAudioFile),
+      keyEquivalent: "i"
+    )
+    transcribeAudio.keyEquivalentModifierMask = [.command, .shift]
+    transcribeAudio.target = self
     let words = fileMenu.addItem(
       withTitle: "Custom Words",
       action: #selector(openVocabulary),
@@ -549,6 +594,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       "History",
       symbolName: "clock.arrow.circlepath",
       action: #selector(openHistory),
+      to: menu
+    )
+    addMenuItem(
+      "Transcribe Audio…",
+      symbolName: "waveform.badge.plus",
+      action: #selector(transcribeAudioFile),
       to: menu
     )
     addMenuItem(
@@ -649,12 +700,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
       .store(in: &subscriptions)
 
-    model.settings.$hasAPIKey
-      .sink { [weak self] _ in
-        guard let self else { return }
-        updateStatusItem(for: model.recording.phase)
-      }
-      .store(in: &subscriptions)
+    Publishers.MergeMany(
+      model.settings.$hasOpenAIAPIKey.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$hasGeminiAPIKey.map { _ in () }.eraseToAnyPublisher(),
+      model.settings.$selectedProvider.map { _ in () }.eraseToAnyPublisher()
+    )
+    .sink { [weak self] _ in
+      guard let self else { return }
+      updateStatusItem(for: model.recording.phase)
+    }
+    .store(in: &subscriptions)
   }
 
   private func showMainWindow() {

@@ -17,14 +17,25 @@ final class LanguageHintValidationTests: XCTestCase {
     XCTAssertEqual(result.normalizedText, "fr")
     XCTAssertFalse(result.isBlocking)
     XCTAssertNotNil(result.message)
-    XCTAssertTrue(result.message?.contains("fr-ca") == true
-      || result.message?.contains("regional") == true)
+    XCTAssertTrue(
+      result.message?.contains("fr-ca") == true
+        || result.message?.contains("regional") == true)
   }
 
   func testAllowsChineseLocales() {
     let result = LanguageHintValidation.parse("zh-CN, zh-tw")
     XCTAssertEqual(result.codes, ["zh-cn", "zh-tw"])
     XCTAssertFalse(result.isBlocking)
+  }
+
+  func testGeminiKeepsRegionalBCP47Codes() {
+    let result = LanguageHintValidation.parse(
+      "en-US, fr-CA, yue-Hant-HK",
+      provider: .gemini
+    )
+    XCTAssertEqual(result.codes, ["en-us", "fr-ca", "yue-hant-hk"])
+    XCTAssertFalse(result.isBlocking)
+    XCTAssertNil(result.message)
   }
 
   func testRejectsGarbage() {

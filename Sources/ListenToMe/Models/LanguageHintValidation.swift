@@ -23,8 +23,13 @@ enum LanguageHintValidation {
     "zh-cn", "zh-tw", "zh-hk",
   ]
 
-  static func parse(_ text: String, finalizePending: Bool = false) -> Result {
-    let rawTokens = text
+  static func parse(
+    _ text: String,
+    provider: TranscriptionProvider = .openAI,
+    finalizePending: Bool = false
+  ) -> Result {
+    let rawTokens =
+      text
       .split(separator: ",")
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
@@ -40,7 +45,7 @@ enum LanguageHintValidation {
     var seen = Set<String>()
 
     for raw in rawTokens {
-      switch classify(raw) {
+      switch classify(raw, provider: provider) {
       case .valid(let code):
         displayTokens.append(code)
         if seen.insert(code).inserted {
@@ -74,7 +79,9 @@ enum LanguageHintValidation {
       isBlocking = true
       let listed = invalid.map { "“\($0)”" }.joined(separator: ", ")
       message =
-        "\(listed) isn’t a supported language code. Use ISO codes like en or fr, or zh-cn / zh-tw / zh-hk for Chinese locales."
+        provider == .gemini
+        ? "\(listed) isn’t a valid BCP-47 language code. Use codes like en, fr-CA, or zh-HK."
+        : "\(listed) isn’t a supported language code. Use ISO codes like en or fr, or zh-cn / zh-tw / zh-hk for Chinese locales."
     } else if !corrected.isEmpty {
       isBlocking = false
       let listed = corrected.map { "“\($0)”" }.joined(separator: ", ")
@@ -100,9 +107,22 @@ enum LanguageHintValidation {
     case invalid(String)
   }
 
-  private static func classify(_ raw: String) -> Classification {
+  private static func classify(
+    _ raw: String,
+    provider: TranscriptionProvider
+  ) -> Classification {
     let token = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !token.isEmpty else { return .invalid(raw) }
+
+    if provider == .gemini {
+      if matches(token, pattern: #"^[a-z]{2,3}(-[a-z0-9]{2,8})*$"#) {
+        return .valid(token)
+      }
+      if matches(token, pattern: #"^[a-z]{2,3}-$"#) {
+        return .pending(token)
+      }
+      return .invalid(token)
+    }
 
     if allowedZHLocales.contains(token) {
       return .valid(token)

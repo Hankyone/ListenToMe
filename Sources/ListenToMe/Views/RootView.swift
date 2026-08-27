@@ -67,7 +67,8 @@ struct RootView: View {
         history: model.history,
         selectedID: $model.selectedHistoryID,
         recording: model.recording,
-        hotkeyDisplay: model.settings.hotkey.display
+        hotkeyDisplay: model.settings.hotkey.display,
+        onImportAudio: model.chooseAudioFile
       )
     case .vocabulary:
       VocabularyView(settings: model.settings)

@@ -9,14 +9,15 @@ struct SettingsContentView: View {
 
   @State private var apiKey = ""
   @State private var keyStatus = ""
-  @State private var microphones: [MicrophoneInput] = MicrophoneInputCatalog
+  @State private var microphones: [MicrophoneInput] =
+    MicrophoneInputCatalog
     .listInputs()
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 30) {
         VStack(alignment: .leading, spacing: 7) {
-          Text("One model. Your words.")
+          Text("Transcription setup")
             .font(.system(size: 28, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
         }
@@ -44,6 +45,10 @@ struct SettingsContentView: View {
     .onDisappear {
       permissions.stopVisibilityMonitoring()
     }
+    .onChange(of: settings.selectedProvider) { _, _ in
+      apiKey = ""
+      keyStatus = ""
+    }
     .onReceive(
       NotificationCenter.default.publisher(
         for: NSApplication.didBecomeActiveNotification
@@ -54,19 +59,30 @@ struct SettingsContentView: View {
   }
 
   private var keySection: some View {
-    SettingsSection(title: "API key") {
+    SettingsSection(title: "Transcription") {
       VStack(alignment: .leading, spacing: 12) {
+        Picker("Provider", selection: $settings.selectedProvider) {
+          ForEach(TranscriptionProvider.allCases) { provider in
+            Text(provider.title).tag(provider)
+          }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 300)
+
         HStack(spacing: 12) {
           ThemedTextField(
-            placeholder: settings.hasAPIKey && apiKey.isEmpty
+            placeholder: settings.hasAPIKey(for: settings.selectedProvider) && apiKey.isEmpty
               ? "Key saved. Paste a new one to replace."
-              : OpenAIService.keyPlaceholder,
+              : settings.selectedProvider.keyPlaceholder,
             text: $apiKey,
             isSecure: true,
             onSubmit: saveAPIKey
           )
 
-          if settings.hasAPIKey, apiKey.isEmpty, keyStatus.isEmpty {
+          if settings.hasAPIKey(for: settings.selectedProvider),
+            apiKey.isEmpty,
+            keyStatus.isEmpty
+          {
             Image(systemName: "checkmark.circle.fill")
               .font(.system(size: 16))
               .foregroundStyle(AppTheme.success)
@@ -79,23 +95,26 @@ struct SettingsContentView: View {
           }
           .buttonStyle(RecordActionButtonStyle())
         }
-        .animation(.easeOut(duration: 0.18), value: settings.hasAPIKey)
+        .animation(
+          .easeOut(duration: 0.18),
+          value: settings.hasAPIKey(for: settings.selectedProvider)
+        )
 
         if !keyStatus.isEmpty {
           Text(keyStatus)
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
-        } else if !settings.hasAPIKey {
-          Text("Paste an OpenAI API key, then Save Key.")
+        } else if !settings.hasAPIKey(for: settings.selectedProvider) {
+          Text("Paste a \(settings.selectedProvider.title) API key, then Save Key.")
             .font(.system(size: 12))
             .foregroundStyle(AppTheme.secondaryText)
         }
 
         Button {
-          NSWorkspace.shared.open(OpenAIService.createKeyURL)
+          NSWorkspace.shared.open(settings.selectedProvider.createKeyURL)
         } label: {
           Label(
-            OpenAIService.createKeyLabel,
+            settings.selectedProvider.createKeyLabel,
             systemImage: "arrow.up.right.square"
           )
           .font(.system(size: 12, weight: .medium))
@@ -177,17 +196,19 @@ struct SettingsContentView: View {
           microphones: microphones
         )
 
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Noise reduction")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(AppTheme.primaryText)
-          Picker("", selection: $settings.micProfile) {
-            ForEach(MicProfile.allCases) { profile in
-              Text(profile.title).tag(profile)
+        if settings.selectedProvider == .openAI {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Noise reduction")
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(AppTheme.primaryText)
+            Picker("", selection: $settings.micProfile) {
+              ForEach(MicProfile.allCases) { profile in
+                Text(profile.title).tag(profile)
+              }
             }
+            .labelsHidden()
+            .frame(width: 200)
           }
-          .labelsHidden()
-          .frame(width: 200)
         }
       }
     }
@@ -230,12 +251,13 @@ struct SettingsContentView: View {
   }
 
   private func saveAPIKey() {
+    let provider = settings.selectedProvider
     do {
-      try settings.saveAPIKey(apiKey)
+      try settings.saveAPIKey(apiKey, for: provider)
       keyStatus =
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "API key removed"
-        : "OpenAI API key saved"
+        : "\(provider.title) API key saved"
       apiKey = ""
     } catch {
       keyStatus = error.localizedDescription

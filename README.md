@@ -5,7 +5,7 @@
 <h1 align="center">ListenToMe</h1>
 
 <p align="center">
-  Fast, native macOS dictation powered by OpenAI's GPT Live Transcribe.
+  Fast, native macOS dictation powered by Gemini or OpenAI.
 </p>
 
 ListenToMe lives in your menu bar. Press a shortcut anywhere, speak, and your
@@ -17,28 +17,28 @@ words land in the app you were using.
 - Live partial transcripts with custom words and language hints
 - Focus-safe pasting with automatic clipboard fallback
 - Local history with editable transcripts and replayable audio
-- API key you paste in Setup, stored locally with the app
-- No accounts, analytics, cloud history, or extra model providers
+- Drag-and-drop audio file transcription
+- Provider API keys stored locally with the app
+- No accounts, analytics, or cloud history
 
 ## Run it
 
-ListenToMe requires macOS 14 or newer, Xcode, and an OpenAI Platform API key.
+ListenToMe requires macOS 14 or newer, Xcode, and a Gemini or OpenAI API key.
 
 ```sh
-./Scripts/package-app.sh
-open dist/ListenToMe.app
+./script/build_and_run.sh
 ```
 
 Add your API key in **Setup**, then grant Microphone and Accessibility access
-when macOS asks. OpenAI API usage is billed separately from ChatGPT and Codex
+when macOS asks. Provider API usage is billed separately from consumer
 subscriptions.
 
 ## How it works
 
-`Shortcut → microphone → GPT Live Transcribe → cursor`
+`Shortcut → microphone → Gemini or OpenAI → cursor`
 
-Audio is streamed as 24 kHz PCM through an OpenAI Realtime transcription
-session using [`gpt-live-transcribe`](https://developers.openai.com/api/docs/models/gpt-live-transcribe).
+Audio is streamed through Gemini 3.5 Transcribe Live or OpenAI GPT Live
+Transcribe, depending on the provider selected in Setup.
 The app keeps transcript history and recorded audio locally on your Mac.
 
 ## Develop

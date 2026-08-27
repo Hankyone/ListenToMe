@@ -1,7 +1,6 @@
 import Foundation
 
-/// Stores the OpenAI API key in ListenToMe's Application Support folder.
-/// The only way a key appears here is the user pasting it in Setup.
+/// Stores provider API keys in ListenToMe's Application Support folder.
 struct APIKeyStore {
   enum StoreError: LocalizedError {
     case unreadable
@@ -18,19 +17,24 @@ struct APIKeyStore {
   }
 
   private let fileManager: FileManager
+  private let rootURL: URL?
 
-  init(fileManager: FileManager = .default) {
+  init(
+    fileManager: FileManager = .default,
+    rootURL: URL? = nil
+  ) {
     self.fileManager = fileManager
+    self.rootURL = rootURL
   }
 
-  func saveAPIKey(_ value: String) throws {
+  func saveAPIKey(_ value: String, for provider: TranscriptionProvider = .openAI) throws {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
-      try deleteAPIKey()
+      try deleteAPIKey(for: provider)
       return
     }
 
-    let url = try fileURL()
+    let url = try fileURL(for: provider)
     try fileManager.createDirectory(
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -47,13 +51,13 @@ struct APIKeyStore {
   }
 
   /// Whether a key file exists  -  does not read the secret.
-  func hasStoredKey() -> Bool {
-    guard let url = try? fileURL() else { return false }
+  func hasStoredKey(for provider: TranscriptionProvider = .openAI) -> Bool {
+    guard let url = try? fileURL(for: provider) else { return false }
     return fileManager.fileExists(atPath: url.path)
   }
 
-  func loadAPIKey() throws -> String? {
-    let url = try fileURL()
+  func loadAPIKey(for provider: TranscriptionProvider = .openAI) throws -> String? {
+    let url = try fileURL(for: provider)
     guard fileManager.fileExists(atPath: url.path) else {
       return nil
     }
@@ -71,13 +75,16 @@ struct APIKeyStore {
     }
   }
 
-  func deleteAPIKey() throws {
-    let url = try fileURL()
+  func deleteAPIKey(for provider: TranscriptionProvider = .openAI) throws {
+    let url = try fileURL(for: provider)
     guard fileManager.fileExists(atPath: url.path) else { return }
-    try fileManager.removeItem(at: url)
+    _ = try fileManager.trashItem(at: url, resultingItemURL: nil)
   }
 
-  private func fileURL() throws -> URL {
+  private func fileURL(for provider: TranscriptionProvider) throws -> URL {
+    if let rootURL {
+      return rootURL.appendingPathComponent(provider.keyFileName, isDirectory: false)
+    }
     guard
       let root = fileManager.urls(
         for: .applicationSupportDirectory,
@@ -86,8 +93,9 @@ struct APIKeyStore {
     else {
       throw StoreError.unwritable("Application Support is unavailable.")
     }
-    return root
+    return
+      root
       .appendingPathComponent("ca.hankyone.ListenToMe", isDirectory: true)
-      .appendingPathComponent(OpenAIService.keyFileName, isDirectory: false)
+      .appendingPathComponent(provider.keyFileName, isDirectory: false)
   }
 }

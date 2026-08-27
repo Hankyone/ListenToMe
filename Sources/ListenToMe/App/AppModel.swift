@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
   let recording: RecordingCoordinator
   let updates: UpdateService
   var onShowMainWindow: (() -> Void)?
+  var onChooseAudioFile: (() -> Void)?
 
   init(
     settings: SettingsStore? = nil,
@@ -52,5 +53,9 @@ final class AppModel: ObservableObject {
       selectedSection = section
     }
     onShowMainWindow?()
+  }
+
+  func chooseAudioFile() {
+    onChooseAudioFile?()
   }
 }

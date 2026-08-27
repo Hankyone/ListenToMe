@@ -16,6 +16,7 @@ final class RecordingCoordinator: ObservableObject {
   /// Set when Space locks a push-to-talk hold into hands-free continuation.
   @Published private(set) var isHandsFreeLocked = false
   @Published private(set) var reprocessingID: UUID?
+  @Published private(set) var isImportingAudio = false
   @Published var errorMessage: String?
 
   var onHistoryEntryCreated: ((UUID) -> Void)?
@@ -30,9 +31,10 @@ final class RecordingCoordinator: ObservableObject {
     self?.applyLiveSnapshot(snapshot)
   }
 
-  private var client: (any TranscriptionClient)?
-  /// Pre-connected OpenAI realtime socket so hotkey doesn't pay TLS + session.setup.
-  private var standbyClient: RealtimeTranscriptionClient?
+  private var client: (any ReusableTranscriptionClient)?
+  /// Pre-connected provider socket so hotkey doesn't pay TLS + session setup.
+  private var standbyClient: (any ReusableTranscriptionClient)?
+  private var standbyProvider: TranscriptionProvider?
   private var standbyConfiguration: TranscriptionConfiguration?
   private var standbyTask: Task<Void, Never>?
   private var audioContinuation: AsyncStream<Data>.Continuation?
@@ -40,6 +42,8 @@ final class RecordingCoordinator: ObservableObject {
   private var elapsedTask: Task<Void, Never>?
   private var finishTimeoutTask: Task<Void, Never>?
   private var recordingURL: URL?
+  private var activeProvider: TranscriptionProvider?
+  private var activeConfiguration: TranscriptionConfiguration?
   private var startedAt: Date?
   private var didFinalizeCurrentRecording = false
   private var stopRequestedWhileStarting = false
@@ -141,6 +145,8 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
 
+    let provider = settings.selectedProvider
+    activeProvider = provider
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
       await failAndPreserve(message)
@@ -149,16 +155,16 @@ final class RecordingCoordinator: ObservableObject {
 
     let apiKey: String
     do {
-      apiKey = try settings.loadAPIKey()
+      apiKey = try settings.loadAPIKey(for: provider)
     } catch {
       await failAndPreserve(
-        "The OpenAI API key could not be read. Paste it again in Setup."
+        "The \(provider.title) API key could not be read. Paste it again in Setup."
       )
       return
     }
     guard !apiKey.isEmpty else {
       await failAndPreserve(
-        "Paste an OpenAI API key in Setup before dictating."
+        "Paste a \(provider.title) API key in Setup before dictating."
       )
       return
     }
@@ -198,7 +204,11 @@ final class RecordingCoordinator: ObservableObject {
         return
       }
 
-      try await startLiveCapture(recordingURL: recordingURL, apiKey: apiKey)
+      try await startLiveCapture(
+        recordingURL: recordingURL,
+        provider: provider,
+        apiKey: apiKey
+      )
       guard id == takeID else {
         _ = await audioCapture.stop()
         await cleanUpConnection()
@@ -221,8 +231,13 @@ final class RecordingCoordinator: ObservableObject {
     permissions.refresh()
     guard permissions.microphoneGranted else { return }
     let deviceUID = settings.preferredMicrophoneUID()
+    let provider = settings.selectedProvider
     Task.detached(priority: .userInitiated) { [audioCapture] in
-      try? await audioCapture.prepare(deviceUID: deviceUID)
+      try? await audioCapture.prepare(
+        deviceUID: deviceUID,
+        sampleRate: provider.liveSampleRate,
+        chunkByteCount: provider.liveChunkByteCount
+      )
     }
   }
 
@@ -231,10 +246,15 @@ final class RecordingCoordinator: ObservableObject {
     permissions.refresh()
     guard permissions.microphoneGranted else { return }
     let deviceUID = settings.preferredMicrophoneUID()
-    try? await audioCapture.prepare(deviceUID: deviceUID)
+    let provider = settings.selectedProvider
+    try? await audioCapture.prepare(
+      deviceUID: deviceUID,
+      sampleRate: provider.liveSampleRate,
+      chunkByteCount: provider.liveChunkByteCount
+    )
   }
 
-  /// Pre-open the OpenAI realtime socket while idle (mic warm + WS warm).
+  /// Pre-open the selected provider's realtime socket while idle.
   func prepareRealtimeSession() {
     scheduleStandbyConnection()
   }
@@ -368,24 +388,99 @@ final class RecordingCoordinator: ObservableObject {
     delivery.copy(text)
   }
 
+  func importAudio(at sourceURL: URL) async {
+    guard !phase.isBusy, reprocessingID == nil, !isImportingAudio else { return }
+    let provider = settings.selectedProvider
+    let languageHints = settings.normalizeLanguageTextIfNeeded()
+    if languageHints.isBlocking, let message = languageHints.message {
+      errorMessage = message
+      return
+    }
+
+    let apiKey: String
+    do {
+      apiKey = try settings.loadAPIKey(for: provider)
+    } catch {
+      errorMessage = "The \(provider.title) API key could not be read. Paste it again in Setup."
+      return
+    }
+    guard !apiKey.isEmpty else {
+      errorMessage = "Paste a \(provider.title) API key in Setup before importing audio."
+      return
+    }
+
+    isImportingAudio = true
+    errorMessage = nil
+    defer { isImportingAudio = false }
+
+    let hasScopedAccess = sourceURL.startAccessingSecurityScopedResource()
+    let importedURL: URL
+    do {
+      importedURL = try history.importRecording(from: sourceURL)
+    } catch {
+      if hasScopedAccess { sourceURL.stopAccessingSecurityScopedResource() }
+      errorMessage = UserFacingError.message(from: error.localizedDescription)
+      return
+    }
+    if hasScopedAccess { sourceURL.stopAccessingSecurityScopedResource() }
+
+    let duration = HistoryStore.audioDuration(at: importedURL)
+    let configuration = settings.transcriptionConfiguration
+    do {
+      let text = try await FileTranscriptionService.transcribe(
+        audioURL: importedURL,
+        provider: provider,
+        apiKey: apiKey,
+        configuration: configuration
+      )
+      let entry = HistoryEntry(
+        id: UUID(),
+        createdAt: Date(),
+        transcript: spokenTranscript(text, target: nil, provider: provider),
+        duration: duration,
+        audioFileName: importedURL.lastPathComponent,
+        targetApplication: nil,
+        deliveryOutcome: .imported
+      )
+      history.add(entry)
+      onHistoryEntryCreated?(entry.id)
+    } catch {
+      let entry = HistoryEntry(
+        id: UUID(),
+        createdAt: Date(),
+        transcript: "",
+        duration: duration,
+        audioFileName: importedURL.lastPathComponent,
+        targetApplication: nil,
+        deliveryOutcome: .audioSaved
+      )
+      history.add(entry)
+      onHistoryEntryCreated?(entry.id)
+      errorMessage =
+        UserFacingError.message(from: error.localizedDescription)
+        + " Your audio is saved in History."
+    }
+  }
+
   func reprocessHistoryEntry(id: UUID) async {
     guard reprocessingID == nil else { return }
     guard let entry = history.entry(id: id) else { return }
 
+    let provider = settings.selectedProvider
     let apiKey: String
     do {
-      apiKey = try settings.loadAPIKey()
+      apiKey = try settings.loadAPIKey(for: provider)
     } catch {
       errorMessage = UserFacingError.message(
         from:
-          "The OpenAI API key could not be read. Paste it again in Setup."
+          "The \(provider.title) API key could not be read. Paste it again in Setup."
       )
       return
     }
     guard !apiKey.isEmpty else {
       errorMessage = UserFacingError.message(
         from:
-          "Paste an OpenAI API key in Setup before reprocessing."
+          "Paste a \(provider.title) API key in Setup before reprocessing."
       )
       return
     }
@@ -399,9 +494,9 @@ final class RecordingCoordinator: ObservableObject {
     do {
       let text = try await FileTranscriptionService.transcribe(
         audioURL: history.audioURL(for: entry),
+        provider: provider,
         apiKey: apiKey,
-        prompt: configuration.prompt,
-        languages: configuration.languages
+        configuration: configuration
       )
       history.updateTranscript(id: id, transcript: text)
     } catch {
@@ -409,9 +504,14 @@ final class RecordingCoordinator: ObservableObject {
     }
   }
 
-  private func startLiveCapture(recordingURL: URL, apiKey: String) async throws {
+  private func startLiveCapture(
+    recordingURL: URL,
+    provider: TranscriptionProvider,
+    apiKey: String
+  ) async throws {
     var configuration = settings.transcriptionConfiguration
     configuration.targetAppName = targetApplication?.name
+    activeConfiguration = configuration
 
     let streamPair = AsyncStream<Data>.makeStream(
       bufferingPolicy: .unbounded
@@ -424,6 +524,8 @@ final class RecordingCoordinator: ObservableObject {
     try await audioCapture.start(
       recordingURL: recordingURL,
       deviceUID: settings.preferredMicrophoneUID(),
+      sampleRate: provider.liveSampleRate,
+      chunkByteCount: provider.liveChunkByteCount,
       onPCMChunk: { [weak self] data in
         trace?.mark("first_pcm")
         self?.audioContinuation?.yield(data)
@@ -441,8 +543,11 @@ final class RecordingCoordinator: ObservableObject {
     )
     trace?.mark("mic")
 
-    let claimed = await claimStandbyClient(matching: configuration)
-    let client: RealtimeTranscriptionClient
+    let claimed = await claimStandbyClient(
+      provider: provider,
+      matching: configuration
+    )
+    let client: any ReusableTranscriptionClient
     let needsConnect: Bool
     if let claimed {
       client = claimed
@@ -450,7 +555,7 @@ final class RecordingCoordinator: ObservableObject {
       trace?.note("path", "warm")
       trace?.mark("socket_warm")
     } else {
-      client = RealtimeTranscriptionClient(apiKey: apiKey)
+      client = makeLiveClient(provider: provider, apiKey: apiKey)
       needsConnect = true
       trace?.note("path", "cold")
     }
@@ -468,11 +573,10 @@ final class RecordingCoordinator: ObservableObject {
           await client.setEventHandler { [weak self] event in
             self?.handle(event, take: captureTakeID)
           }
-          Task.detached {
-            try? await client.refreshSession(configuration: configuration)
-            trace?.mark("session_refresh")
-          }
+          try await client.refreshSession(configuration: configuration)
+          trace?.mark("session_refresh")
         }
+        try await client.beginAudio()
         var sentFirst = false
         for await chunk in streamPair.stream {
           try Task.checkCancellation()
@@ -494,38 +598,70 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func claimStandbyClient(
+    provider: TranscriptionProvider,
     matching configuration: TranscriptionConfiguration
-  ) async -> RealtimeTranscriptionClient? {
+  ) async -> (any ReusableTranscriptionClient)? {
     guard let standby = standbyClient else { return nil }
+    guard standbyProvider == provider else {
+      await standby.disconnect()
+      standbyClient = nil
+      standbyProvider = nil
+      standbyConfiguration = nil
+      return nil
+    }
     guard await standby.isSessionReady else {
       await standby.disconnect()
       standbyClient = nil
+      standbyProvider = nil
       standbyConfiguration = nil
       return nil
     }
     // Reuse when core settings match; target app is refreshed via session.update.
     if let standbyConfiguration,
-      !Self.standbyCompatible(standbyConfiguration, configuration)
+      !Self.standbyCompatible(
+        standbyConfiguration,
+        configuration,
+        provider: provider
+      )
     {
       await standby.disconnect()
       standbyClient = nil
+      standbyProvider = nil
       self.standbyConfiguration = nil
       return nil
     }
     standbyClient = nil
+    standbyProvider = nil
     self.standbyConfiguration = nil
     return standby
   }
 
   private static func standbyCompatible(
     _ standby: TranscriptionConfiguration,
-    _ live: TranscriptionConfiguration
+    _ live: TranscriptionConfiguration,
+    provider: TranscriptionProvider
   ) -> Bool {
-    standby.basePrompt == live.basePrompt
-      && standby.vocabulary == live.vocabulary
-      && standby.languages == live.languages
-      && standby.delay == live.delay
-      && standby.micProfile == live.micProfile
+    switch provider {
+    case .openAI:
+      return standby.basePrompt == live.basePrompt
+        && standby.vocabulary == live.vocabulary
+        && standby.languages == live.languages
+        && standby.delay == live.delay
+        && standby.micProfile == live.micProfile
+    case .gemini:
+      return standby.keywords == live.keywords
+        && standby.languages == live.languages
+    }
+  }
+
+  private func makeLiveClient(
+    provider: TranscriptionProvider,
+    apiKey: String
+  ) -> any ReusableTranscriptionClient {
+    switch provider {
+    case .openAI: RealtimeTranscriptionClient(apiKey: apiKey)
+    case .gemini: GeminiLiveTranscriptionClient(apiKey: apiKey)
+    }
   }
 
   private func scheduleStandbyConnection() {
@@ -548,16 +684,22 @@ final class RecordingCoordinator: ObservableObject {
 
     let apiKey: String
     do {
-      apiKey = try settings.loadAPIKey()
+      apiKey = try settings.loadAPIKey(for: settings.selectedProvider)
     } catch {
       return
     }
     guard !apiKey.isEmpty else { return }
 
     let configuration = settings.transcriptionConfiguration
+    let provider = settings.selectedProvider
     if let standby = standbyClient,
+      standbyProvider == provider,
       let standbyConfiguration,
-      Self.standbyCompatible(standbyConfiguration, configuration),
+      Self.standbyCompatible(
+        standbyConfiguration,
+        configuration,
+        provider: provider
+      ),
       await standby.isSessionReady
     {
       return
@@ -567,9 +709,10 @@ final class RecordingCoordinator: ObservableObject {
       await old.disconnect()
     }
     standbyClient = nil
+    standbyProvider = nil
     standbyConfiguration = nil
 
-    let client = RealtimeTranscriptionClient(apiKey: apiKey)
+    let client = makeLiveClient(provider: provider, apiKey: apiKey)
     do {
       // Noop handler until a take claims this socket.
       try await client.connect(configuration: configuration) { _ in }
@@ -586,19 +729,25 @@ final class RecordingCoordinator: ObservableObject {
         break
       }
       standbyClient = client
+      standbyProvider = provider
       standbyConfiguration = configuration
     } catch {
       standbyClient = nil
+      standbyProvider = nil
       standbyConfiguration = nil
     }
   }
 
-  private func parkClientForStandby(_ client: RealtimeTranscriptionClient) async {
+  private func parkClientForStandby(
+    _ client: any ReusableTranscriptionClient,
+    provider: TranscriptionProvider,
+    configuration: TranscriptionConfiguration
+  ) async {
     do {
       try await client.clearInputBuffer()
       await client.setEventHandler(nil)
-      let configuration = settings.transcriptionConfiguration
       standbyClient = client
+      standbyProvider = provider
       standbyConfiguration = configuration
     } catch {
       await client.disconnect()
@@ -614,12 +763,19 @@ final class RecordingCoordinator: ObservableObject {
 
     let active = client
     client = nil
-    guard let realtime = active as? RealtimeTranscriptionClient else {
+    guard let active,
+      let provider = activeProvider,
+      let configuration = activeConfiguration
+    else {
       await active?.disconnect()
       scheduleStandbyConnection()
       return
     }
-    await parkClientForStandby(realtime)
+    await parkClientForStandby(
+      active,
+      provider: provider,
+      configuration: configuration
+    )
   }
 
   private func stopBatchTranscription() async {
@@ -632,13 +788,14 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
 
+    let provider = activeProvider ?? settings.selectedProvider
     let apiKey: String
     do {
-      apiKey = try settings.loadAPIKey()
+      apiKey = try settings.loadAPIKey(for: provider)
     } catch {
       await persistFailedTake(
         message:
-          "The OpenAI API key could not be read. Paste it again in Setup."
+          "The \(provider.title) API key could not be read. Paste it again in Setup."
       )
       return
     }
@@ -650,12 +807,18 @@ final class RecordingCoordinator: ObservableObject {
       latency?.mark("file_transcribe")
       let text = try await FileTranscriptionService.transcribe(
         audioURL: recordingURL,
+        provider: provider,
         apiKey: apiKey,
-        prompt: configuration.prompt,
-        languages: configuration.languages
+        configuration: configuration
       )
       latency?.mark("completed")
-      await finalize(transcript: spokenTranscript(text, target: targetApplication))
+      await finalize(
+        transcript: spokenTranscript(
+          text,
+          target: targetApplication,
+          provider: provider
+        )
+      )
     } catch {
       if Self.isBenignEmptyTake(error.localizedDescription),
         !recordingFileHasAudio()
@@ -677,6 +840,11 @@ final class RecordingCoordinator: ObservableObject {
       guard phase == .recording || phase == .finishing else { return }
       latency?.mark("first_text")
       liveDraft.applyDelta(text)
+
+    case .interim(let text):
+      guard phase == .recording || phase == .finishing else { return }
+      latency?.mark("first_text")
+      liveDraft.applyInterim(text)
 
     case .completed(_, let transcript):
       guard phase == .recording || phase == .finishing else { return }
@@ -734,7 +902,11 @@ final class RecordingCoordinator: ObservableObject {
       audioSendTask = nil
     }
 
-    let finalText = spokenTranscript(transcript, target: targetApplication)
+    let finalText = spokenTranscript(
+      transcript,
+      target: targetApplication,
+      provider: activeProvider ?? settings.selectedProvider
+    )
     guard !finalText.isEmpty, let recordingURL else {
       await recycleOrDropClient()
       if recordingFileHasAudio() {
@@ -935,13 +1107,14 @@ final class RecordingCoordinator: ObservableObject {
 
   private func spokenTranscript(
     _ transcript: String,
-    target: TargetApplication?
+    target: TargetApplication?,
+    provider: TranscriptionProvider
   ) -> String {
     var configuration = settings.transcriptionConfiguration
     configuration.targetAppName = target?.name
     return TranscriptSanitizer.spokenText(
       from: transcript,
-      prompt: configuration.prompt
+      prompt: provider == .openAI ? configuration.prompt : ""
     )
   }
 
@@ -950,6 +1123,7 @@ final class RecordingCoordinator: ObservableObject {
     return await transcribeRecording(
       at: recordingURL,
       target: targetApplication,
+      provider: activeProvider ?? settings.selectedProvider,
       trace: latency
     )
   }
@@ -957,12 +1131,13 @@ final class RecordingCoordinator: ObservableObject {
   private func transcribeRecording(
     at url: URL,
     target: TargetApplication?,
+    provider: TranscriptionProvider,
     trace: TakeLatencyTrace?
   ) async -> String? {
     guard HistoryStore.hasPreservableAudio(at: url) else { return nil }
     let apiKey: String
     do {
-      apiKey = try settings.loadAPIKey()
+      apiKey = try settings.loadAPIKey(for: provider)
     } catch {
       return nil
     }
@@ -974,9 +1149,9 @@ final class RecordingCoordinator: ObservableObject {
       trace?.mark("file_transcribe")
       return try await FileTranscriptionService.transcribe(
         audioURL: url,
+        provider: provider,
         apiKey: apiKey,
-        prompt: configuration.prompt,
-        languages: configuration.languages
+        configuration: configuration
       )
     } catch {
       return nil
@@ -1038,6 +1213,7 @@ final class RecordingCoordinator: ObservableObject {
       transcript: partialTranscript,
       startedAt: startedAt,
       targetApplication: targetApplication,
+      provider: activeProvider ?? settings.selectedProvider,
       latency: latency,
       client: client
     )
@@ -1068,7 +1244,11 @@ final class RecordingCoordinator: ObservableObject {
       await client?.disconnect()
     }
 
-    var text = spokenTranscript(take.transcript, target: take.targetApplication)
+    var text = spokenTranscript(
+      take.transcript,
+      target: take.targetApplication,
+      provider: take.provider
+    )
     let elapsed = take.startedAt.map { Date().timeIntervalSince($0) } ?? 0
     if text.isEmpty,
       elapsed >= DictationGesturePolicy.minTranscribeDuration,
@@ -1077,10 +1257,15 @@ final class RecordingCoordinator: ObservableObject {
       let recovered = await transcribeRecording(
         at: url,
         target: take.targetApplication,
+        provider: take.provider,
         trace: take.latency
       )
     {
-      text = spokenTranscript(recovered, target: take.targetApplication)
+      text = spokenTranscript(
+        recovered,
+        target: take.targetApplication,
+        provider: take.provider
+      )
     }
 
     guard let recordingURL = take.recordingURL else {
@@ -1285,6 +1470,8 @@ final class RecordingCoordinator: ObservableObject {
     recordingURL = nil
     startedAt = nil
     targetApplication = nil
+    activeProvider = nil
+    activeConfiguration = nil
     usesBatchTranscription = false
     liveStreamDetached = false
     isClosingTake = false
@@ -1296,6 +1483,7 @@ private struct DetachedTake {
   var transcript: String
   var startedAt: Date?
   var targetApplication: TargetApplication?
+  var provider: TranscriptionProvider
   var latency: TakeLatencyTrace?
-  var client: (any TranscriptionClient)?
+  var client: (any ReusableTranscriptionClient)?
 }

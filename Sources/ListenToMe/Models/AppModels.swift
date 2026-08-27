@@ -55,6 +55,7 @@ enum DeliveryOutcome: String, Codable, Sendable {
   case copiedPasteFailed
   /// Audio is on disk; transcription and/or paste did not complete.
   case audioSaved
+  case imported
 
   var title: String {
     switch self {
@@ -64,6 +65,7 @@ enum DeliveryOutcome: String, Codable, Sendable {
     case .copiedNoTarget: "Copied"
     case .copiedPasteFailed: "Copied after paste failed"
     case .audioSaved: "Audio saved"
+    case .imported: "Imported"
     }
   }
 
@@ -71,6 +73,7 @@ enum DeliveryOutcome: String, Codable, Sendable {
     switch self {
     case .pasted: "arrow.down.to.line"
     case .audioSaved: "waveform"
+    case .imported: "waveform.badge.plus"
     default: "doc.on.doc"
     }
   }
@@ -237,6 +240,69 @@ enum OpenAIService {
   static let createKeyLabel = "Create an OpenAI API key"
   static let keyFileName = "openai-api-key"
   static let createKeyURL = URL(string: "https://platform.openai.com/api-keys")!
+}
+
+enum GeminiService {
+  static let keyPlaceholder = "AQ.…"
+  static let createKeyLabel = "Create a Gemini API key"
+  static let keyFileName = "gemini-api-key"
+  static let createKeyURL = URL(string: "https://aistudio.google.com/api-keys")!
+}
+
+enum TranscriptionProvider: String, CaseIterable, Identifiable, Codable, Sendable {
+  case openAI
+  case gemini
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .openAI: "OpenAI"
+    case .gemini: "Gemini"
+    }
+  }
+
+  var keyPlaceholder: String {
+    switch self {
+    case .openAI: OpenAIService.keyPlaceholder
+    case .gemini: GeminiService.keyPlaceholder
+    }
+  }
+
+  var keyFileName: String {
+    switch self {
+    case .openAI: OpenAIService.keyFileName
+    case .gemini: GeminiService.keyFileName
+    }
+  }
+
+  var createKeyLabel: String {
+    switch self {
+    case .openAI: OpenAIService.createKeyLabel
+    case .gemini: GeminiService.createKeyLabel
+    }
+  }
+
+  var createKeyURL: URL {
+    switch self {
+    case .openAI: OpenAIService.createKeyURL
+    case .gemini: GeminiService.createKeyURL
+    }
+  }
+
+  var liveSampleRate: Double {
+    switch self {
+    case .openAI: 24_000
+    case .gemini: 16_000
+    }
+  }
+
+  var liveChunkByteCount: Int {
+    switch self {
+    case .openAI: 1_920  // 40 ms of mono Int16 audio.
+    case .gemini: 3_200  // 100 ms of mono Int16 audio.
+    }
+  }
 }
 
 enum WritingGuidance {

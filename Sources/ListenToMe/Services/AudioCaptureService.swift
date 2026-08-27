@@ -18,7 +18,7 @@ final class AudioCaptureService: @unchecked Sendable {
     var errorDescription: String? {
       switch self {
       case .invalidInputFormat: "The selected microphone has no usable audio format."
-      case .converterUnavailable: "The microphone audio could not be prepared for OpenAI."
+      case .converterUnavailable: "The microphone audio could not be prepared for transcription."
       case .alreadyRecording: "A recording is already in progress."
       case .deviceUnavailable: "That microphone isn’t available. Pick another in Setup."
       }
@@ -43,21 +43,21 @@ final class AudioCaptureService: @unchecked Sendable {
   private var lastLevelUpdate = Date.distantPast
   private var mode: Mode = .idle
   private var warmedDeviceUID: String?
+  private var warmedSampleRate: Double?
   private var coolDownWorkItem: DispatchWorkItem?
 
   private var onPCMChunk: ((Data) -> Void)?
   private var onLevel: ((Float) -> Void)?
   private var onError: ((Error) -> Void)?
 
-  private let targetFormat = AVAudioFormat(
+  private var targetFormat = AVAudioFormat(
     commonFormat: .pcmFormatInt16,
     sampleRate: 24_000,
     channels: 1,
     interleaved: true
   )!
 
-  /// ~40ms of 24 kHz mono Int16  -  snappier first bytes to the API.
-  private let targetChunkSize = 1_920
+  private var targetChunkSize = 1_920
   /// Handy keeps the graph warm ~30s after a take for back-to-back dictation
   /// (engine stopped  -  no orange mic light while waiting).
   private let keepAliveSeconds: TimeInterval = 30
@@ -69,11 +69,19 @@ final class AudioCaptureService: @unchecked Sendable {
   }
 
   /// Build/prepare the HAL graph without starting capture (no privacy light).
-  func prepare(deviceUID: String = MicrophoneInput.systemDefaultID) async throws {
+  func prepare(
+    deviceUID: String = MicrophoneInput.systemDefaultID,
+    sampleRate: Double = 24_000,
+    chunkByteCount: Int = 1_920
+  ) async throws {
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       hardwareQueue.async {
         do {
-          try self.prepareSync(deviceUID: deviceUID)
+          try self.prepareSync(
+            deviceUID: deviceUID,
+            sampleRate: sampleRate,
+            chunkByteCount: chunkByteCount
+          )
           continuation.resume()
         } catch {
           continuation.resume(throwing: error)
@@ -92,6 +100,8 @@ final class AudioCaptureService: @unchecked Sendable {
   func start(
     recordingURL: URL,
     deviceUID: String = MicrophoneInput.systemDefaultID,
+    sampleRate: Double = 24_000,
+    chunkByteCount: Int = 1_920,
     onPCMChunk: @escaping (Data) -> Void,
     onLevel: @escaping (Float) -> Void,
     onError: @escaping (Error) -> Void
@@ -102,6 +112,8 @@ final class AudioCaptureService: @unchecked Sendable {
           try self.startSync(
             recordingURL: recordingURL,
             deviceUID: deviceUID,
+            sampleRate: sampleRate,
+            chunkByteCount: chunkByteCount,
             onPCMChunk: onPCMChunk,
             onLevel: onLevel,
             onError: onError
@@ -134,7 +146,11 @@ final class AudioCaptureService: @unchecked Sendable {
 
   // MARK: - Hardware queue (sync)
 
-  private func prepareSync(deviceUID: String) throws {
+  private func prepareSync(
+    deviceUID: String,
+    sampleRate: Double,
+    chunkByteCount: Int
+  ) throws {
     coolDownWorkItem?.cancel()
     coolDownWorkItem = nil
 
@@ -142,9 +158,11 @@ final class AudioCaptureService: @unchecked Sendable {
     let alreadyWarm = mode == .warm || mode == .recording
     let isRecordingNow = mode == .recording
     let sameDevice = warmedDeviceUID == deviceUID
+    let sameSampleRate = warmedSampleRate == sampleRate
     let engine = self.engine
     lock.unlock()
-    if alreadyWarm, sameDevice, engine != nil {
+    if alreadyWarm, sameDevice, sameSampleRate, engine != nil {
+      targetChunkSize = chunkByteCount
       // Stay prepared, but never leave the mic running while idle.
       if let engine, engine.isRunning, !isRecordingNow {
         engine.stop()
@@ -153,12 +171,20 @@ final class AudioCaptureService: @unchecked Sendable {
     }
 
     tearDownEngine()
-    try buildEngine(deviceUID: deviceUID, recordingURL: nil, startImmediately: false)
+    try buildEngine(
+      deviceUID: deviceUID,
+      sampleRate: sampleRate,
+      chunkByteCount: chunkByteCount,
+      recordingURL: nil,
+      startImmediately: false
+    )
   }
 
   private func startSync(
     recordingURL: URL,
     deviceUID: String,
+    sampleRate: Double,
+    chunkByteCount: Int,
     onPCMChunk: @escaping (Data) -> Void,
     onLevel: @escaping (Float) -> Void,
     onError: @escaping (Error) -> Void
@@ -171,12 +197,17 @@ final class AudioCaptureService: @unchecked Sendable {
       lock.unlock()
       throw CaptureError.alreadyRecording
     }
-    let canPromoteWarm = mode == .warm && warmedDeviceUID == deviceUID && engine != nil
+    let canPromoteWarm =
+      mode == .warm
+      && warmedDeviceUID == deviceUID
+      && warmedSampleRate == sampleRate
+      && engine != nil
     lock.unlock()
 
     self.onPCMChunk = onPCMChunk
     self.onLevel = onLevel
     self.onError = onError
+    targetChunkSize = chunkByteCount
 
     if canPromoteWarm {
       try beginRecording(to: recordingURL)
@@ -184,7 +215,13 @@ final class AudioCaptureService: @unchecked Sendable {
     }
 
     tearDownEngine()
-    try buildEngine(deviceUID: deviceUID, recordingURL: recordingURL, startImmediately: true)
+    try buildEngine(
+      deviceUID: deviceUID,
+      sampleRate: sampleRate,
+      chunkByteCount: chunkByteCount,
+      recordingURL: recordingURL,
+      startImmediately: true
+    )
   }
 
   private func stopSync() -> Data? {
@@ -269,6 +306,8 @@ final class AudioCaptureService: @unchecked Sendable {
 
   private func buildEngine(
     deviceUID: String,
+    sampleRate: Double,
+    chunkByteCount: Int,
     recordingURL: URL?,
     startImmediately: Bool
   ) throws {
@@ -290,7 +329,14 @@ final class AudioCaptureService: @unchecked Sendable {
         channels: 1
       ) ?? hardwareFormat
 
-    guard let converter = AVAudioConverter(from: tapFormat, to: targetFormat) else {
+    guard
+      let targetFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: sampleRate,
+        channels: 1,
+        interleaved: true
+      ), let converter = AVAudioConverter(from: tapFormat, to: targetFormat)
+    else {
       throw CaptureError.converterUnavailable
     }
 
@@ -307,9 +353,12 @@ final class AudioCaptureService: @unchecked Sendable {
     self.engine = engine
     self.audioFile = audioFile
     self.converter = converter
+    self.targetFormat = targetFormat
+    targetChunkSize = chunkByteCount
     pendingPCM.removeAll(keepingCapacity: true)
     lastLevelUpdate = .distantPast
     warmedDeviceUID = deviceUID
+    warmedSampleRate = sampleRate
     mode = recordingURL == nil ? .warm : .recording
 
     input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) {
@@ -367,6 +416,7 @@ final class AudioCaptureService: @unchecked Sendable {
     audioFile = nil
     converter = nil
     warmedDeviceUID = nil
+    warmedSampleRate = nil
     lock.lock()
     mode = .idle
     pendingPCM.removeAll(keepingCapacity: false)
