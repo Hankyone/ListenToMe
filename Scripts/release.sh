@@ -153,7 +153,7 @@ rm -rf "$SPARKLE_DIR"
 # Normalize to inline markdown even if generate_appcast linked a notes URL.
 python3 "$PROJECT_DIR/Scripts/embed-appcast-notes.py" \
     "$RELEASE_DIR/appcast.xml" \
-    "$NOTES_RELEASE_MD"
+    "$NOTES_MD"
 
 print "Release artifacts ready in $RELEASE_DIR"
 print "  version: $VERSION ($BUILD)"
