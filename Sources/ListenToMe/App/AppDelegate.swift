@@ -105,7 +105,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if self.model.recording.isHandsFreeLocked,
         self.model.recording.phase == .recording
       {
-        self.playStopCueIfEnabled()
         Task { await self.model.recording.stop() }
       } else {
         self.playStopCueIfEnabled()
@@ -280,7 +279,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     liveKind = .unclassified
     holdEndedAt = Date()
     hotkey.setSpaceLockArmed(false)
-    playStopCueIfEnabled()
     overlayController?.update(for: .idle, enabled: true)
     Task { [weak self] in
       await self?.model.recording.dismissTake()

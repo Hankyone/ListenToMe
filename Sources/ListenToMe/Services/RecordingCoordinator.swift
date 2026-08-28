@@ -330,14 +330,22 @@ final class RecordingCoordinator: ObservableObject {
     elapsedTask?.cancel()
     elapsedTask = nil
 
+    try? await Task.sleep(
+      nanoseconds: DictationGesturePolicy.releaseTailNanoseconds
+    )
+    guard phase == .finishing, takeID == generation + 1 else { return }
+    latency?.mark("release_tail")
+
     if usesBatchTranscription {
       await stopBatchTranscription()
+      playStopCueIfEnabled()
       return
     }
 
     if let remainder = await audioCapture.stop() {
       audioContinuation?.yield(remainder)
     }
+    playStopCueIfEnabled()
     guard sessionTakeID != 0, takeID == generation + 1 else { return }
     latency?.mark("mic_stopped")
     audioContinuation?.finish()
@@ -367,7 +375,7 @@ final class RecordingCoordinator: ObservableObject {
     // Prefer the final `completed` event, but don't leave a silent tap hanging.
     let hasLiveText =
       !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let timeoutNs: UInt64 = hasLiveText ? 800_000_000 : 400_000_000
+    let timeoutNs: UInt64 = hasLiveText ? 1_200_000_000 : 400_000_000
     finishTimeoutTask?.cancel()
     let session = sessionTakeID
     finishTimeoutTask = Task { [weak self] in
@@ -1251,6 +1259,9 @@ final class RecordingCoordinator: ObservableObject {
     stopRequestedWhileStarting = false
     isClosingTake = false
     isHandsFreeLocked = false
+    if audioCapture.isRecording {
+      _ = await audioCapture.stop()
+    }
 
     let take = DetachedTake(
       recordingURL: recordingURL,
@@ -1428,6 +1439,7 @@ final class RecordingCoordinator: ObservableObject {
     discardCurrentRecording()
     teardownSession()
     resetRecordingReferences()
+    playStopCueIfEnabled()
     finishLatency("aborted")
     prepareForNextTake()
   }
@@ -1521,6 +1533,11 @@ final class RecordingCoordinator: ObservableObject {
       resultingItemURL: nil
     )
     self.recordingURL = nil
+  }
+
+  private func playStopCueIfEnabled() {
+    guard settings.playDictationSounds else { return }
+    DictationSoundService.shared.playStop()
   }
 
   private func resetRecordingReferences() {

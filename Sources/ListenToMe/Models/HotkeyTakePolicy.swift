@@ -48,6 +48,12 @@ enum DictationGesturePolicy {
   static let holdEndIgnoreWindow: TimeInterval = 0.16
   /// Shorter than this: dismiss, skip the transcription pipeline.
   static let minTranscribeDuration: TimeInterval = 0.20
+  /// After key-up, keep the mic open so the last syllable and a bit of
+  /// trailing silence still reach the transcriber.
+  static let releaseTail: TimeInterval = 0.40
+  static var releaseTailNanoseconds: UInt64 {
+    UInt64(releaseTail * 1_000_000_000)
+  }
 
   static func pressAction(
     phase: RecordingPhase,

@@ -1,3 +1,7 @@
+## ListenToMe 0.3.63
+
+- Keep the microphone open for 400ms after you release the key so the last words still make it into the transcript.
+
 ## ListenToMe 0.3.62
 
 - After a successful paste, restore the previous clipboard instead of leaving the transcript there.

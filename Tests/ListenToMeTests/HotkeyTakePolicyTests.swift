@@ -253,4 +253,12 @@ final class HotkeyTakePolicyTests: XCTestCase {
       .finishLive
     )
   }
+
+  func testReleaseTailKeepsTheMicOpenAfterKeyUp() {
+    XCTAssertEqual(DictationGesturePolicy.releaseTail, 0.40, accuracy: 0.001)
+    XCTAssertEqual(
+      DictationGesturePolicy.releaseTailNanoseconds,
+      400_000_000
+    )
+  }
 }
