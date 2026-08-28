@@ -2,6 +2,10 @@ import Foundation
 
 enum TranscriptionClientEvent: Equatable, Sendable {
   case sessionReady
+  /// The provider connection dropped or announced an imminent rollover.
+  case connectionInterrupted
+  /// A live provider connection rolled over while the microphone stayed active.
+  case connectionRecovered(resumed: Bool)
   case delta(itemID: String?, text: String)
   /// A full replacement hypothesis, used by Gemini live transcription.
   case interim(text: String)

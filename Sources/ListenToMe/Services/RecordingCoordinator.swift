@@ -293,7 +293,8 @@ final class RecordingCoordinator: ObservableObject {
       phase: phase,
       hasAudioSendTask: audioSendTask != nil,
       isMicRecording: audioCapture.isRecording,
-      alreadyRequestedStop: stopRequestedWhileStarting
+      alreadyRequestedStop: stopRequestedWhileStarting,
+      usesBatchTranscription: usesBatchTranscription
     ) {
     case .markStopBeforeStart:
       stopRequestedWhileStarting = true
@@ -836,6 +837,21 @@ final class RecordingCoordinator: ObservableObject {
     case .sessionReady:
       latency?.mark("session_ready")
 
+    case .connectionInterrupted:
+      guard phase == .recording || phase == .finishing else { return }
+      latency?.note("live_recovery", "started")
+      usesBatchTranscription = true
+
+    case .connectionRecovered(let resumed):
+      guard phase == .recording || phase == .finishing else { return }
+      latency?.note("live_recovery", resumed ? "resumed" : "fresh")
+      // The live text remains useful feedback, but the whole CAF is the
+      // authoritative final source after any socket rollover.
+      usesBatchTranscription = true
+      if !resumed {
+        liveDraft.beginNewInterimSegment()
+      }
+
     case .delta(_, let text):
       guard phase == .recording || phase == .finishing else { return }
       latency?.mark("first_text")
@@ -850,6 +866,12 @@ final class RecordingCoordinator: ObservableObject {
       guard phase == .recording || phase == .finishing else { return }
       latency?.mark("completed")
       liveDraft.applyCompleted(transcript)
+      if usesBatchTranscription {
+        if phase == .finishing {
+          Task { await self.finishWithBestAvailableTranscript() }
+        }
+        return
+      }
       Task {
         await self.finalize(transcript: transcript, take: take)
       }
@@ -1022,7 +1044,7 @@ final class RecordingCoordinator: ObservableObject {
   private func finishWithBestAvailableTranscript() async {
     guard !didFinalizeCurrentRecording, !isClosingTake else { return }
     let live = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !liveStreamDetached, !live.isEmpty {
+    if !usesBatchTranscription, !liveStreamDetached, !live.isEmpty {
       await finalize(transcript: live)
       return
     }
@@ -1347,6 +1369,12 @@ final class RecordingCoordinator: ObservableObject {
         await finalize(transcript: live)
         return
       }
+      if recordingFileHasAudio() {
+        await persistFailedTake(
+          message: "The take stopped while transcription was recovering."
+        )
+        return
+      }
     }
 
     if phase.isBusy {
@@ -1361,6 +1389,16 @@ final class RecordingCoordinator: ObservableObject {
     guard phase == .recording || phase == .connecting,
       !didFinalizeCurrentRecording
     else { return }
+    let recordedDuration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+    if recordedDuration >= DictationGesturePolicy.minTranscribeDuration,
+      recordingFileHasAudio()
+    {
+      stopRequestedWhileStarting = false
+      await persistFailedTake(
+        message: "The take stopped before live transcription finished starting."
+      )
+      return
+    }
     mediaPause.end()
     elapsedTask?.cancel()
     elapsedTask = nil

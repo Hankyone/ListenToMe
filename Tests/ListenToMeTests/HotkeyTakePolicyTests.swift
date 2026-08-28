@@ -240,4 +240,17 @@ final class HotkeyTakePolicyTests: XCTestCase {
       .finishAfterConnect
     )
   }
+
+  func testStopAfterLiveDetachFinishesTheSavedAudioPath() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .recording,
+        hasAudioSendTask: false,
+        isMicRecording: true,
+        alreadyRequestedStop: false,
+        usesBatchTranscription: true
+      ),
+      .finishLive
+    )
+  }
 }

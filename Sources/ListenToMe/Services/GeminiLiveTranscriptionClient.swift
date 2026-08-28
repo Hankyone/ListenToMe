@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   static let transcriptionModel = "models/gemini-3.5-transcribe-live"
@@ -25,14 +26,23 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   }
 
   private let apiKey: String
+  private let logger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "ca.hankyone.ListenToMe",
+    category: "GeminiLive"
+  )
   private var socket: URLSessionWebSocketTask?
   private var receiveTask: Task<Void, Never>?
+  private var reconnectTask: Task<Void, Never>?
   private var readyTimeoutTask: Task<Void, Never>?
   private var readyContinuation: CheckedContinuation<Void, Error>?
   private var eventHandler: (@MainActor (TranscriptionClientEvent) -> Void)?
+  private var configuration: TranscriptionConfiguration?
+  private var resumptionHandle: String?
   private var sessionReady = false
   private var connectedAt: Date?
+  private var connectionGeneration = 0
   private var activityOpen = false
+  private var isDisconnecting = false
 
   init(apiKey: String) {
     self.apiKey = apiKey
@@ -40,46 +50,22 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
 
   var isSessionReady: Bool {
     guard sessionReady, socket != nil, let connectedAt else { return false }
-    // Gemini live sessions are finite. Replace warm sockets before the limit.
-    return Date().timeIntervalSince(connectedAt) < 8 * 60
+    // A claimed warm socket should leave most of the model's ten-minute
+    // streaming window available to the take.
+    return reconnectTask == nil && Date().timeIntervalSince(connectedAt) < 2 * 60
   }
 
   func connect(
     configuration: TranscriptionConfiguration,
     eventHandler: @escaping @MainActor (TranscriptionClientEvent) -> Void
   ) async throws {
-    guard var components = URLComponents(string: Self.endpoint) else {
-      throw ClientError.invalidURL
-    }
-    components.queryItems = [URLQueryItem(name: "key", value: apiKey)]
-    guard let url = components.url else { throw ClientError.invalidURL }
-
     await tearDownSocket(emittingCancellation: false)
-
-    var request = URLRequest(url: url)
-    request.timeoutInterval = 15
-    let socket = URLSession.shared.webSocketTask(with: request)
-    self.socket = socket
     self.eventHandler = eventHandler
-    sessionReady = false
-    connectedAt = nil
+    self.configuration = configuration
+    resumptionHandle = nil
     activityOpen = false
-    socket.resume()
-
-    receiveTask = Task { [weak self] in
-      await self?.receiveLoop()
-    }
-
-    try await send(Self.setupEvent(configuration: configuration))
-    try await withCheckedThrowingContinuation {
-      (continuation: CheckedContinuation<Void, Error>) in
-      readyContinuation = continuation
-      readyTimeoutTask = Task { [weak self] in
-        try? await Task.sleep(nanoseconds: 10_000_000_000)
-        guard !Task.isCancelled else { return }
-        await self?.resolveReady(with: .failure(ClientError.connectionTimedOut))
-      }
-    }
+    isDisconnecting = false
+    try await openSocket(configuration: configuration, resumptionHandle: nil)
   }
 
   func setEventHandler(
@@ -95,6 +81,7 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   }
 
   func clearInputBuffer() async throws {
+    await reconnectTask?.value
     guard sessionReady, socket != nil else { return }
     if activityOpen {
       try await send(["realtimeInput": ["activityEnd": [:]]])
@@ -103,6 +90,7 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   }
 
   func beginAudio() async throws {
+    await reconnectTask?.value
     guard sessionReady, socket != nil else { throw ClientError.notConnected }
     if !activityOpen {
       try await send(["realtimeInput": ["activityStart": [:]]])
@@ -112,7 +100,10 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
 
   func appendAudio(_ data: Data) async throws {
     guard !data.isEmpty else { return }
-    guard activityOpen else { throw ClientError.notConnected }
+    await reconnectTask?.value
+    guard sessionReady, socket != nil, activityOpen else {
+      throw ClientError.notConnected
+    }
     try await send([
       "realtimeInput": [
         "audio": [
@@ -124,6 +115,7 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   }
 
   func commit() async throws {
+    await reconnectTask?.value
     guard sessionReady, socket != nil else { throw ClientError.notConnected }
     if activityOpen {
       try await send(["realtimeInput": ["activityEnd": [:]]])
@@ -132,11 +124,17 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
   }
 
   func disconnect() async {
+    isDisconnecting = true
+    reconnectTask?.cancel()
+    reconnectTask = nil
     await tearDownSocket(emittingCancellation: true)
+    configuration = nil
+    resumptionHandle = nil
   }
 
   static func setupEvent(
-    configuration: TranscriptionConfiguration
+    configuration: TranscriptionConfiguration,
+    resumptionHandle: String? = nil
   ) -> [String: Any] {
     var transcription: [String: Any] = [
       "mode": "SMART"
@@ -154,16 +152,23 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
       transcription["customVocabulary"] = terms
     }
 
-    return [
-      "setup": [
-        "model": transcriptionModel,
-        "generationConfig": ["responseModalities": ["TEXT"]],
-        "realtimeInputConfig": [
-          "automaticActivityDetection": ["disabled": true]
-        ],
-        "inputAudioTranscription": transcription,
-      ]
+    var sessionResumption: [String: Any] = [:]
+    if let resumptionHandle, !resumptionHandle.isEmpty {
+      sessionResumption["handle"] = resumptionHandle
+    }
+    let setup: [String: Any] = [
+      "model": transcriptionModel,
+      "generationConfig": ["responseModalities": ["TEXT"]],
+      "realtimeInputConfig": [
+        "automaticActivityDetection": ["disabled": true]
+      ],
+      "inputAudioTranscription": transcription,
+      "sessionResumption": sessionResumption,
+      "contextWindowCompression": [
+        "slidingWindow": [String: Any]()
+      ],
     ]
+    return ["setup": setup]
   }
 
   static func transcriptionEvents(from event: [String: Any]) -> [TranscriptionClientEvent] {
@@ -204,6 +209,64 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
     continuation.resume(with: result)
   }
 
+  private func openSocket(
+    configuration: TranscriptionConfiguration,
+    resumptionHandle: String?
+  ) async throws {
+    guard var components = URLComponents(string: Self.endpoint) else {
+      throw ClientError.invalidURL
+    }
+    components.queryItems = [URLQueryItem(name: "key", value: apiKey)]
+    guard let url = components.url else { throw ClientError.invalidURL }
+
+    receiveTask?.cancel()
+    receiveTask = nil
+    socket?.cancel(with: .normalClosure, reason: nil)
+    socket = nil
+    sessionReady = false
+    connectedAt = nil
+    connectionGeneration += 1
+    let generation = connectionGeneration
+
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 15
+    let socket = URLSession.shared.webSocketTask(with: request)
+    self.socket = socket
+    socket.resume()
+
+    receiveTask = Task { [weak self] in
+      await self?.receiveLoop(socket: socket, generation: generation)
+    }
+
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, Error>) in
+      readyContinuation = continuation
+      readyTimeoutTask = Task { [weak self] in
+        try? await Task.sleep(nanoseconds: 10_000_000_000)
+        guard !Task.isCancelled else { return }
+        await self?.resolveReady(with: .failure(ClientError.connectionTimedOut))
+      }
+      Task { [weak self] in
+        guard let self else { return }
+        do {
+          try await self.send(
+            Self.setupEvent(
+              configuration: configuration,
+              resumptionHandle: resumptionHandle
+            ),
+            through: socket
+          )
+        } catch {
+          await self.resolveReady(with: .failure(error))
+        }
+      }
+    }
+    connectedAt = Date()
+    logger.info(
+      "Gemini live socket ready; resumed=\(resumptionHandle != nil, privacy: .public)"
+    )
+  }
+
   private func tearDownSocket(emittingCancellation: Bool) async {
     if emittingCancellation {
       resolveReady(with: .failure(CancellationError()))
@@ -217,6 +280,7 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
     }
     receiveTask?.cancel()
     receiveTask = nil
+    connectionGeneration += 1
     socket?.cancel(with: .normalClosure, reason: nil)
     socket = nil
     eventHandler = nil
@@ -227,6 +291,13 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
 
   private func send(_ event: [String: Any]) async throws {
     guard let socket else { throw ClientError.notConnected }
+    try await send(event, through: socket)
+  }
+
+  private func send(
+    _ event: [String: Any],
+    through socket: URLSessionWebSocketTask
+  ) async throws {
     guard JSONSerialization.isValidJSONObject(event),
       let data = try? JSONSerialization.data(withJSONObject: event),
       let text = String(data: data, encoding: .utf8)
@@ -236,8 +307,10 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
     try await socket.send(.string(text))
   }
 
-  private func receiveLoop() async {
-    guard let socket else { return }
+  private func receiveLoop(
+    socket: URLSessionWebSocketTask,
+    generation: Int
+  ) async {
     while !Task.isCancelled {
       do {
         let message = try await socket.receive()
@@ -249,11 +322,20 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
         }
         guard let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { continue }
+        guard generation == connectionGeneration else { return }
 
         if event["setupComplete"] != nil {
           resolveReady(with: .success(()))
           await emit(.sessionReady)
           continue
+        }
+
+        if let update = event["sessionResumptionUpdate"] as? [String: Any],
+          update["resumable"] as? Bool == true,
+          let handle = update["newHandle"] as? String,
+          !handle.isEmpty
+        {
+          resumptionHandle = handle
         }
 
         let parsed = Self.transcriptionEvents(from: event)
@@ -262,25 +344,118 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
             resolveReady(
               with: .failure(ClientError.serverRejected(message))
             )
+            continue
           }
           await emit(transcriptionEvent)
         }
 
         if event["goAway"] != nil {
           sessionReady = false
-          await emit(
-            .error("The Gemini live session ended. Your audio will be transcribed from History."))
+          let timeLeft = Self.goAwaySeconds(from: event)
+          logger.info(
+            "Gemini requested connection rollover; secondsLeft=\(timeLeft ?? -1, privacy: .public)"
+          )
+          await emit(.connectionInterrupted)
+          scheduleReconnect(reason: "goAway")
           return
         }
       } catch {
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, generation == connectionGeneration else { return }
         sessionReady = false
         let message = UserFacingError.message(from: error.localizedDescription)
-        resolveReady(with: .failure(ClientError.serverRejected(message)))
-        await emit(.error(message))
+        if readyContinuation != nil {
+          resolveReady(with: .failure(ClientError.serverRejected(message)))
+          return
+        }
+        guard !isDisconnecting else { return }
+        logger.error("Gemini live socket closed unexpectedly")
+        await emit(.connectionInterrupted)
+        scheduleReconnect(reason: "socketClosed")
         return
       }
     }
+  }
+
+  static func goAwaySeconds(from event: [String: Any]) -> Double? {
+    guard let goAway = event["goAway"] as? [String: Any],
+      let raw = goAway["timeLeft"]
+    else { return nil }
+    if let seconds = raw as? Double { return seconds }
+    if let seconds = raw as? Int { return Double(seconds) }
+    if let text = raw as? String {
+      return Double(text.trimmingCharacters(in: CharacterSet(charactersIn: "s")))
+    }
+    if let duration = raw as? [String: Any] {
+      if let seconds = duration["seconds"] as? Double { return seconds }
+      if let seconds = duration["seconds"] as? Int { return Double(seconds) }
+      if let text = duration["seconds"] as? String { return Double(text) }
+    }
+    return nil
+  }
+
+  private func scheduleReconnect(reason: String) {
+    guard reconnectTask == nil, configuration != nil, !isDisconnecting else { return }
+    logger.info("Scheduling Gemini live recovery; reason=\(reason, privacy: .public)")
+    reconnectTask = Task { [weak self] in
+      await self?.recoverConnection()
+    }
+  }
+
+  private func recoverConnection() async {
+    guard let configuration, !isDisconnecting else {
+      reconnectTask = nil
+      return
+    }
+    let handle = resumptionHandle
+    var lastError: Error = ClientError.notConnected
+
+    for attempt in 0..<3 {
+      guard !Task.isCancelled, !isDisconnecting else {
+        reconnectTask = nil
+        return
+      }
+      if attempt > 0 {
+        try? await Task.sleep(nanoseconds: UInt64(attempt) * 300_000_000)
+      }
+      do {
+        var resumed = false
+        if let handle {
+          do {
+            try await openSocket(configuration: configuration, resumptionHandle: handle)
+            resumed = true
+          } catch {
+            lastError = error
+            resumptionHandle = nil
+            try await openSocket(configuration: configuration, resumptionHandle: nil)
+          }
+        } else {
+          try await openSocket(configuration: configuration, resumptionHandle: nil)
+        }
+
+        if activityOpen {
+          try await send(["realtimeInput": ["activityStart": [:]]])
+        }
+        reconnectTask = nil
+        logger.info(
+          "Gemini live recovery succeeded; resumed=\(resumed, privacy: .public)"
+        )
+        await emit(.connectionRecovered(resumed: resumed))
+        return
+      } catch {
+        lastError = error
+        logger.error(
+          "Gemini live recovery attempt failed; attempt=\(attempt + 1, privacy: .public)"
+        )
+      }
+    }
+
+    reconnectTask = nil
+    sessionReady = false
+    await emit(
+      .error(
+        "Gemini could not restore the live connection. The saved recording will be transcribed when you stop. \(UserFacingError.message(from: lastError.localizedDescription))"
+      )
+    )
   }
 
   private func emit(_ event: TranscriptionClientEvent) async {

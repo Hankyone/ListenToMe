@@ -1,3 +1,8 @@
+## ListenToMe 0.3.59
+
+- Keep Gemini dictation running across the model's ten-minute connection rollover, then verify the final transcript from the saved recording.
+- Preserve meaningful audio in History whenever a live connection or stop-state recovery cannot finish normally.
+
 ## ListenToMe 0.3.58
 
 - Add a system input-volume slider for the active microphone in Setup, with clear handling for microphones that manage their own gain.

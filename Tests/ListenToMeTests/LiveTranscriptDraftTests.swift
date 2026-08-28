@@ -54,6 +54,24 @@ final class LiveTranscriptDraftTests: XCTestCase {
     XCTAssertEqual(draft.snapshot.committed, "")
   }
 
+  func testFreshGeminiConnectionKeepsThePriorSegment() {
+    let draft = LiveTranscriptDraft(stabilizeDelayNanoseconds: 1_000_000_000)
+    draft.applyInterim("First part of the thought")
+    draft.beginNewInterimSegment()
+    draft.applyInterim("and the recovered connection continues")
+
+    XCTAssertEqual(
+      draft.snapshot.display,
+      "First part of the thought and the recovered connection continues"
+    )
+
+    draft.applyCompleted("and the recovered connection finishes.")
+    XCTAssertEqual(
+      draft.snapshot.committed,
+      "First part of the thought and the recovered connection finishes."
+    )
+  }
+
   private func waitUntil(
     timeoutNanoseconds: UInt64,
     pollNanoseconds: UInt64 = 5_000_000,

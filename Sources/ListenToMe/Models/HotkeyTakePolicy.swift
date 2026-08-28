@@ -130,7 +130,8 @@ enum RecordingStopPolicy {
     phase: RecordingPhase,
     hasAudioSendTask: Bool,
     isMicRecording: Bool,
-    alreadyRequestedStop: Bool
+    alreadyRequestedStop: Bool,
+    usesBatchTranscription: Bool = false
   ) -> RecordingStopDecision {
     switch phase {
     case .idle, .delivered, .failed:
@@ -138,7 +139,7 @@ enum RecordingStopPolicy {
     case .finishing:
       return .recoverFinishing
     case .connecting, .recording:
-      if hasAudioSendTask {
+      if hasAudioSendTask || (usesBatchTranscription && isMicRecording) {
         return .finishLive
       }
       if isMicRecording && !alreadyRequestedStop {

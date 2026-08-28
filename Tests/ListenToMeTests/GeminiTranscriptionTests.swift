@@ -27,6 +27,11 @@ final class GeminiTranscriptionTests: XCTestCase {
     )
 
     XCTAssertEqual(setup["model"] as? String, "models/gemini-3.5-transcribe-live")
+    XCTAssertNotNil(setup["sessionResumption"] as? [String: Any])
+    let compression = try XCTUnwrap(
+      setup["contextWindowCompression"] as? [String: Any]
+    )
+    XCTAssertNotNil(compression["slidingWindow"] as? [String: Any])
     XCTAssertEqual(transcription["mode"] as? String, "SMART")
     XCTAssertEqual(
       transcription["customVocabulary"] as? [String],
@@ -40,6 +45,31 @@ final class GeminiTranscriptionTests: XCTestCase {
     XCTAssertFalse(serialized.contains("Chronicles"))
     XCTAssertFalse(serialized.contains("Translate everything"))
     XCTAssertFalse(serialized.contains("Notes"))
+  }
+
+  func testLiveSetupCanResumeAProviderSession() throws {
+    let event = GeminiLiveTranscriptionClient.setupEvent(
+      configuration: configuration,
+      resumptionHandle: "resume-handle"
+    )
+    let setup = try XCTUnwrap(event["setup"] as? [String: Any])
+    let resumption = try XCTUnwrap(setup["sessionResumption"] as? [String: Any])
+    XCTAssertEqual(resumption["handle"] as? String, "resume-handle")
+  }
+
+  func testParsesGoAwayDuration() {
+    XCTAssertEqual(
+      GeminiLiveTranscriptionClient.goAwaySeconds(from: [
+        "goAway": ["timeLeft": "12.5s"]
+      ]),
+      12.5
+    )
+    XCTAssertEqual(
+      GeminiLiveTranscriptionClient.goAwaySeconds(from: [
+        "goAway": ["timeLeft": ["seconds": "8"]]
+      ]),
+      8
+    )
   }
 
   func testLiveEventsDistinguishReplacementInterimAndFinal() {

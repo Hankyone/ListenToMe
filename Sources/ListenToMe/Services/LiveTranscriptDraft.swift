@@ -17,6 +17,7 @@ final class LiveTranscriptDraft {
   private let stabilizeDelayNanoseconds: UInt64
   private var buffer = ""
   private var committed = ""
+  private var interimPrefix = ""
   private var stabilizeTask: Task<Void, Never>?
   private var onChange: ((LiveTranscriptSnapshot) -> Void)?
 
@@ -44,6 +45,7 @@ final class LiveTranscriptDraft {
     stabilizeTask = nil
     buffer = ""
     committed = ""
+    interimPrefix = ""
     publish()
   }
 
@@ -58,7 +60,7 @@ final class LiveTranscriptDraft {
   /// unlike OpenAI's append-only delta stream.
   func applyInterim(_ text: String) {
     guard !text.isEmpty else { return }
-    buffer = text
+    buffer = interimPrefix + text
     if !buffer.hasPrefix(committed) {
       committed = ""
     }
@@ -70,8 +72,22 @@ final class LiveTranscriptDraft {
   func applyCompleted(_ transcript: String) {
     stabilizeTask?.cancel()
     stabilizeTask = nil
-    buffer = transcript
-    committed = transcript
+    let final = interimPrefix + transcript
+    buffer = final
+    committed = final
+    interimPrefix = ""
+    publish()
+  }
+
+  /// Preserve the current live hypothesis before a provider starts a fresh
+  /// transcription session for the rest of the same recording.
+  func beginNewInterimSegment() {
+    stabilizeTask?.cancel()
+    stabilizeTask = nil
+    let current = snapshot.display.trimmingCharacters(in: .whitespacesAndNewlines)
+    committed = current
+    interimPrefix = current.isEmpty ? "" : current + " "
+    buffer = interimPrefix
     publish()
   }
 
