@@ -1,3 +1,4 @@
+import AudioToolbox
 import CoreAudio
 import Foundation
 
@@ -87,10 +88,17 @@ enum MicrophoneVolumeService {
     return deviceID
   }
 
+  /// System Settings' input slider is virtual main volume (`vmvc`) on the
+  /// input scope. It exists even when a USB mic has no master `volm` control.
   private static func preferredVolumeAddresses(
     for deviceID: AudioDeviceID
   ) -> [AudioObjectPropertyAddress] {
-    let master = volumeAddress(element: kAudioObjectPropertyElementMain)
+    let virtual = virtualMainVolumeAddress()
+    if readScalar(deviceID: deviceID, address: virtual) != nil {
+      return [virtual]
+    }
+
+    let master = channelVolumeAddress(element: kAudioObjectPropertyElementMain)
     if readScalar(deviceID: deviceID, address: master) != nil,
       isWritable(deviceID: deviceID, address: master)
     {
@@ -101,8 +109,12 @@ enum MicrophoneVolumeService {
     let channels: [AudioObjectPropertyAddress]
     if channelCount > 0 {
       channels = (1...channelCount).compactMap { channel in
-        let address = volumeAddress(element: AudioObjectPropertyElement(channel))
-        return readScalar(deviceID: deviceID, address: address) == nil ? nil : address
+        let address = channelVolumeAddress(
+          element: AudioObjectPropertyElement(channel)
+        )
+        return readScalar(deviceID: deviceID, address: address) == nil
+          ? nil
+          : address
       }
     } else {
       channels = []
@@ -118,7 +130,15 @@ enum MicrophoneVolumeService {
     return channels
   }
 
-  private static func volumeAddress(
+  private static func virtualMainVolumeAddress() -> AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(
+      mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+      mScope: kAudioDevicePropertyScopeInput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+  }
+
+  private static func channelVolumeAddress(
     element: AudioObjectPropertyElement
   ) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress(

@@ -31,6 +31,11 @@ APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-K32684A887}"
 SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-$PROJECT_DIR/.secrets/sparkle_eddsa_private.key}"
 
+# GitHub secrets sometimes pick up a trailing newline.
+APPLE_ID="${APPLE_ID//[$'\t\r\n ']}"
+APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD//[$'\t\r\n']}"
+APPLE_TEAM_ID="${APPLE_TEAM_ID//[$'\t\r\n ']}"
+
 sparkle_version() {
     python3 - <<'PY'
 import json
@@ -70,6 +75,18 @@ require_file() {
 
 if [[ -z "$APPLE_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
     print -u2 "Set APPLE_ID and APPLE_APP_SPECIFIC_PASSWORD for notarization."
+    exit 1
+fi
+
+print "Checking Apple notarization credentials…"
+if ! xcrun notarytool history \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" >/dev/null
+then
+    print -u2 "Apple rejected the notarization credentials (usually HTTP 401)."
+    print -u2 "Generate a new app-specific password at https://appleid.apple.com"
+    print -u2 "and update the APPLE_APP_SPECIFIC_PASSWORD GitHub Actions secret."
     exit 1
 fi
 

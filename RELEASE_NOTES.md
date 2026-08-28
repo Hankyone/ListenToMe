@@ -1,3 +1,8 @@
+## ListenToMe 0.3.61
+
+- Setup input volume uses the same macOS Sound slider for every microphone, including USB mics like the SoloCast.
+- File transcription stays in History with Gemini or OpenAI, and Setup no longer opens permission settings on its own.
+
 ## ListenToMe 0.3.60
 
 - Make audio-file transcription a labeled action in History while keeping File menu and drag-and-drop access.
