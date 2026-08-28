@@ -364,11 +364,10 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
 
-    // Prefer the final `completed` event, but don't leave the user hanging
-    // after release when we already have live text.
+    // Prefer the final `completed` event, but don't leave a silent tap hanging.
     let hasLiveText =
       !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let timeoutNs: UInt64 = hasLiveText ? 800_000_000 : 12_000_000_000
+    let timeoutNs: UInt64 = hasLiveText ? 800_000_000 : 400_000_000
     finishTimeoutTask?.cancel()
     let session = sessionTakeID
     finishTimeoutTask = Task { [weak self] in
@@ -825,9 +824,11 @@ final class RecordingCoordinator: ObservableObject {
         )
       )
     } catch {
-      if Self.isBenignEmptyTake(error.localizedDescription),
-        !recordingFileHasAudio()
-      {
+      if !EmptyTakePolicy.shouldShowFailure(
+        message: error.localizedDescription,
+        hasTranscript: hasLiveTranscript,
+        hadSpeech: takeHadSpeechEnergy()
+      ) {
         abandonQuietly()
       } else {
         await persistFailedTake(message: error.localizedDescription)
@@ -886,21 +887,16 @@ final class RecordingCoordinator: ObservableObject {
         handleLiveStreamFailure(message)
         return
       }
-      if Self.isBenignEmptyTake(message), !recordingFileHasAudio() {
+      if !EmptyTakePolicy.shouldShowFailure(
+        message: message,
+        hasTranscript: hasLiveTranscript,
+        hadSpeech: takeHadSpeechEnergy()
+      ) {
         abandonQuietly()
       } else {
         Task { await failAndPreserve(message) }
       }
     }
-  }
-
-  private static func isBenignEmptyTake(_ message: String) -> Bool {
-    let lower = message.lowercased()
-    return lower.contains("no speech")
-      || lower.contains("empty transcript")
-      || lower.contains("no audio")
-      || lower.contains("audio too short")
-      || lower.contains("did not return a final transcript")
   }
 
   private func applyLiveSnapshot(_ snapshot: LiveTranscriptSnapshot) {
@@ -935,12 +931,8 @@ final class RecordingCoordinator: ObservableObject {
     )
     guard !finalText.isEmpty, let recordingURL else {
       await recycleOrDropClient()
-      if recordingFileHasAudio() {
-        await persistFailedTake(message: "No transcript came back.")
-      } else {
-        discardCurrentRecording()
-        abandonQuietly()
-      }
+      discardCurrentRecording()
+      abandonQuietly()
       return
     }
 
@@ -1028,7 +1020,20 @@ final class RecordingCoordinator: ObservableObject {
     await stopCapturePreservingFile()
     await recycleOrDropClient()
 
-    if let recovered = await transcribePreservedRecording() {
+    let hadSpeech = takeHadSpeechEnergy()
+    if !EmptyTakePolicy.shouldShowFailure(
+      message: message,
+      hasTranscript: hasLiveTranscript,
+      hadSpeech: hadSpeech
+    ) {
+      isClosingTake = false
+      abandonQuietly()
+      return
+    }
+
+    if hasLiveTranscript || hadSpeech,
+      let recovered = await transcribePreservedRecording()
+    {
       isClosingTake = false
       await finalize(transcript: recovered)
       return
@@ -1044,6 +1049,10 @@ final class RecordingCoordinator: ObservableObject {
       await finalize(transcript: live)
       return
     }
+    if live.isEmpty, !usesBatchTranscription {
+      abandonQuietly()
+      return
+    }
     if let recovered = await transcribePreservedRecording() {
       await finalize(transcript: recovered)
       return
@@ -1052,7 +1061,7 @@ final class RecordingCoordinator: ObservableObject {
       await finalize(transcript: live)
       return
     }
-    await failAndPreserve("Transcription did not finish.")
+    abandonQuietly()
   }
 
   private func cancelPreservingAudio() async {
@@ -1068,7 +1077,7 @@ final class RecordingCoordinator: ObservableObject {
     if !partial.isEmpty {
       delivery.copy(partial)
     }
-    if recordingFileHasAudio() {
+    if recordingFileHasAudio(), hasLiveTranscript || takeHadSpeechEnergy() {
       saveHistoryPreservingAudio(
         transcript: partial,
         outcome: .audioSaved
@@ -1090,6 +1099,14 @@ final class RecordingCoordinator: ObservableObject {
 
   private func persistFailedTake(message: String) async {
     guard !didFinalizeCurrentRecording else { return }
+    if !EmptyTakePolicy.shouldShowFailure(
+      message: message,
+      hasTranscript: hasLiveTranscript,
+      hadSpeech: takeHadSpeechEnergy()
+    ) {
+      abandonQuietly()
+      return
+    }
     didFinalizeCurrentRecording = true
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
@@ -1210,6 +1227,15 @@ final class RecordingCoordinator: ObservableObject {
   private func recordingFileHasAudio() -> Bool {
     guard let recordingURL else { return false }
     return HistoryStore.hasPreservableAudio(at: recordingURL)
+  }
+
+  private var hasLiveTranscript: Bool {
+    !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  /// Waveform floor is 0.04; anything clearly above that is real input.
+  private func takeHadSpeechEnergy() -> Bool {
+    levels.contains { $0 >= 0.18 }
   }
 
   /// The previous take is still committing/pasting. Peel it off so a new
@@ -1360,7 +1386,7 @@ final class RecordingCoordinator: ObservableObject {
         await finalize(transcript: live)
         return
       }
-      if recordingFileHasAudio() {
+      if recordingFileHasAudio(), hasLiveTranscript {
         await persistFailedTake(
           message: "The take stopped while transcription was recovering."
         )
@@ -1382,7 +1408,8 @@ final class RecordingCoordinator: ObservableObject {
     else { return }
     let recordedDuration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
     if recordedDuration >= DictationGesturePolicy.minTranscribeDuration,
-      recordingFileHasAudio()
+      recordingFileHasAudio(),
+      hasLiveTranscript
     {
       stopRequestedWhileStarting = false
       await persistFailedTake(
@@ -1409,6 +1436,8 @@ final class RecordingCoordinator: ObservableObject {
   private func abandonQuietly() {
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
+    didFinalizeCurrentRecording = true
+    isClosingTake = false
     errorMessage = nil
     isHandsFreeLocked = false
     phase = .idle

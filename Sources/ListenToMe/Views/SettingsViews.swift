@@ -197,10 +197,6 @@ struct SettingsContentView: View {
           microphones: microphones
         )
 
-        MicrophoneVolumeControl(
-          deviceUID: settings.preferredMicrophoneUID(from: microphones)
-        )
-
         if settings.selectedProvider == .openAI {
           VStack(alignment: .leading, spacing: 6) {
             Text("Noise reduction")
@@ -278,50 +274,29 @@ private struct MicrophoneVolumeControl: View {
   @State private var isEditing = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 10) {
-        Text("Input volume")
-          .font(.system(size: 13, weight: .medium))
-          .foregroundStyle(AppTheme.primaryText)
-          .frame(width: 84, alignment: .leading)
+    HStack(spacing: 6) {
+      if let snapshot {
+        Slider(
+          value: Binding(
+            get: { value },
+            set: setVolume
+          ),
+          in: 0...1,
+          step: 0.01,
+          onEditingChanged: { editing in
+            isEditing = editing
+            if !editing { refresh() }
+          }
+        )
+        .controlSize(.small)
+        .disabled(!snapshot.isWritable)
+        .accessibilityLabel("Microphone input volume")
+        .accessibilityValue(percentage)
 
-        if let snapshot {
-          Slider(
-            value: Binding(
-              get: { value },
-              set: setVolume
-            ),
-            in: 0...1,
-            step: 0.01,
-            onEditingChanged: { editing in
-              isEditing = editing
-              if !editing { refresh() }
-            }
-          )
-          .frame(maxWidth: 240)
-          .disabled(!snapshot.isWritable)
-          .accessibilityLabel("Microphone input volume")
-          .accessibilityValue(percentage)
-
-          Text(percentage)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
-            .foregroundStyle(AppTheme.secondaryText)
-            .frame(width: 40, alignment: .trailing)
-        } else {
-          Text("Unavailable")
-            .font(.system(size: 13))
-            .foregroundStyle(AppTheme.secondaryText)
-        }
-      }
-
-      if snapshot == nil {
-        Text("Could not read this microphone's system input volume.")
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
-      } else if snapshot?.isWritable == false {
-        Text("This microphone's input volume is read-only.")
-          .font(.system(size: 11))
-          .foregroundStyle(AppTheme.faintText)
+        Text(percentage)
+          .font(.system(size: 11, weight: .medium, design: .monospaced))
+          .foregroundStyle(AppTheme.secondaryText)
+          .frame(width: 34, alignment: .trailing)
       }
     }
     .onAppear(perform: refresh)
@@ -387,10 +362,15 @@ private struct MicrophonePriorityEditor: View {
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(AppTheme.primaryText)
             .lineLimit(1)
+            .frame(minWidth: 72, maxWidth: 200, alignment: .leading)
           if !isCurrentlyAvailable(uid) && uid != MicrophoneInput.systemDefaultID {
             Text("Unplugged")
               .font(.system(size: 11, weight: .semibold))
               .foregroundStyle(AppTheme.accent)
+          }
+          if isCurrentlyAvailable(uid) || uid == MicrophoneInput.systemDefaultID {
+            MicrophoneVolumeControl(deviceUID: uid)
+              .frame(width: 148)
           }
           Spacer(minLength: 8)
           Button {

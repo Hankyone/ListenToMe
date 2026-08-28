@@ -1,3 +1,9 @@
+## ListenToMe 0.3.62
+
+- After a successful paste, restore the previous clipboard instead of leaving the transcript there.
+- A tap or hold with nothing said just ends — no error banner.
+- Each microphone in the Setup priority list has its own input-volume slider.
+
 ## ListenToMe 0.3.61
 
 - Setup input volume uses the same macOS Sound slider for every microphone, including USB mics like the SoloCast.
