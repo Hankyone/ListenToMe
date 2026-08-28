@@ -3,6 +3,10 @@ import Foundation
 
 /// File transcription for history recovery and imported audio.
 enum FileTranscriptionService {
+  static let openAIModel = "gpt-transcribe"
+  static let geminiModel = "gemini-3.5-transcribe"
+  static let maximumUploadChunkDuration: TimeInterval = 45 * 60
+
   enum ServiceError: LocalizedError {
     case missingAudio
     case conversionFailed
@@ -37,29 +41,40 @@ enum FileTranscriptionService {
       throw ServiceError.missingAudio
     }
 
-    let uploadURL = try makeUploadWAV(from: audioURL)
+    let uploadURLs = try await Task.detached(priority: .userInitiated) {
+      try makeUploadFiles(from: audioURL)
+    }.value
     defer {
-      _ = try? FileManager.default.trashItem(
-        at: uploadURL,
-        resultingItemURL: nil
-      )
+      for uploadURL in uploadURLs {
+        _ = try? FileManager.default.trashItem(
+          at: uploadURL,
+          resultingItemURL: nil
+        )
+      }
     }
 
-    switch provider {
-    case .openAI:
-      return try await transcribeOpenAI(
-        fileURL: uploadURL,
-        apiKey: apiKey,
-        prompt: configuration.prompt,
-        language: configuration.languages.first
-      )
-    case .gemini:
-      return try await transcribeGemini(
-        fileURL: uploadURL,
-        apiKey: apiKey,
-        configuration: configuration
-      )
+    var transcripts: [String] = []
+    transcripts.reserveCapacity(uploadURLs.count)
+    for uploadURL in uploadURLs {
+      let transcript: String
+      switch provider {
+      case .openAI:
+        transcript = try await transcribeOpenAI(
+          fileURL: uploadURL,
+          apiKey: apiKey,
+          prompt: configuration.prompt,
+          language: configuration.languages.first
+        )
+      case .gemini:
+        transcript = try await transcribeGemini(
+          fileURL: uploadURL,
+          apiKey: apiKey,
+          configuration: configuration
+        )
+      }
+      transcripts.append(transcript)
     }
+    return transcripts.joined(separator: "\n\n")
   }
 
   private static func transcribeOpenAI(
@@ -79,13 +94,13 @@ enum FileTranscriptionService {
     append(
       "Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n"
     )
-    append("Content-Type: audio/wav\r\n\r\n")
+    append("Content-Type: audio/mp4\r\n\r\n")
     body.append(try Data(contentsOf: fileURL))
     append("\r\n")
 
     append("--\(boundary)\r\n")
     append("Content-Disposition: form-data; name=\"model\"\r\n\r\n")
-    append("gpt-4o-mini-transcribe\r\n")
+    append("\(openAIModel)\r\n")
 
     let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmedPrompt.isEmpty {
@@ -111,6 +126,7 @@ enum FileTranscriptionService {
       "multipart/form-data; boundary=\(boundary)",
       forHTTPHeaderField: "Content-Type"
     )
+    request.timeoutInterval = 10 * 60
     request.httpBody = body
 
     let (data, response) = try await URLSession.shared.data(for: request)
@@ -162,8 +178,9 @@ enum FileTranscriptionService {
     start.setValue("resumable", forHTTPHeaderField: "x-goog-upload-protocol")
     start.setValue("start", forHTTPHeaderField: "x-goog-upload-command")
     start.setValue(String(byteCount), forHTTPHeaderField: "x-goog-upload-header-content-length")
-    start.setValue("audio/wav", forHTTPHeaderField: "x-goog-upload-header-content-type")
+    start.setValue("audio/mp4", forHTTPHeaderField: "x-goog-upload-header-content-type")
     start.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    start.timeoutInterval = 10 * 60
     start.httpBody = try JSONSerialization.data(withJSONObject: [
       "file": ["display_name": fileURL.lastPathComponent]
     ])
@@ -182,6 +199,7 @@ enum FileTranscriptionService {
     upload.setValue("0", forHTTPHeaderField: "x-goog-upload-offset")
     upload.setValue("upload, finalize", forHTTPHeaderField: "x-goog-upload-command")
     upload.setValue(String(byteCount), forHTTPHeaderField: "Content-Length")
+    upload.timeoutInterval = 10 * 60
 
     let (data, response) = try await URLSession.shared.upload(
       for: upload,
@@ -196,17 +214,20 @@ enum FileTranscriptionService {
     apiKey: String
   ) async throws -> GeminiFile {
     var current = file
-    for _ in 0..<30 {
+    let deadline = Date().addingTimeInterval(10 * 60)
+    while Date() < deadline {
+      try Task.checkCancellation()
       switch current.state.uppercased() {
       case "ACTIVE", "": return current
       case "FAILED": throw ServiceError.processingFailed("")
       default: break
       }
-      try await Task.sleep(nanoseconds: 500_000_000)
+      try await Task.sleep(nanoseconds: 1_000_000_000)
       var request = URLRequest(
         url: URL(string: "https://generativelanguage.googleapis.com/v1beta/\(current.name)")!
       )
       request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+      request.timeoutInterval = 60
       let (data, response) = try await URLSession.shared.data(for: request)
       try throwIfNeeded(data: data, response: response)
       current = try decodeGeminiFile(data)
@@ -225,10 +246,11 @@ enum FileTranscriptionService {
     request.httpMethod = "POST"
     request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.timeoutInterval = 10 * 60
     request.httpBody = try JSONSerialization.data(
       withJSONObject: geminiInteractionBody(
         fileURI: file.uri,
-        mimeType: file.mimeType.isEmpty ? "audio/wav" : file.mimeType,
+        mimeType: file.mimeType.isEmpty ? "audio/mp4" : file.mimeType,
         configuration: configuration
       )
     )
@@ -260,7 +282,7 @@ enum FileTranscriptionService {
     }
 
     return [
-      "model": "gemini-3.5-transcribe",
+      "model": geminiModel,
       "input": [
         [
           "type": "audio",
@@ -324,7 +346,7 @@ enum FileTranscriptionService {
     return GeminiFile(
       name: name,
       uri: uri,
-      mimeType: file["mimeType"] as? String ?? file["mime_type"] as? String ?? "audio/wav",
+      mimeType: file["mimeType"] as? String ?? file["mime_type"] as? String ?? "audio/mp4",
       state: file["state"] as? String ?? ""
     )
   }
@@ -350,39 +372,168 @@ enum FileTranscriptionService {
     return trimmed
   }
 
-  private static func makeUploadWAV(from sourceURL: URL) throws -> URL {
-    let input = try AVAudioFile(forReading: sourceURL)
-    let format = input.processingFormat
-    let tempURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("listentome-transcribe-\(UUID().uuidString)")
-      .appendingPathExtension("wav")
-
-    guard
-      let output = try? AVAudioFile(
-        forWriting: tempURL,
-        settings: [
-          AVFormatIDKey: kAudioFormatLinearPCM,
-          AVSampleRateKey: format.sampleRate,
-          AVNumberOfChannelsKey: format.channelCount,
-          AVLinearPCMBitDepthKey: 16,
-          AVLinearPCMIsFloatKey: false,
-          AVLinearPCMIsBigEndianKey: false,
-        ]
-      )
-    else {
-      throw ServiceError.conversionFailed
+  static func uploadChunkRanges(
+    totalFrames: AVAudioFramePosition,
+    sampleRate: Double
+  ) -> [Range<AVAudioFramePosition>] {
+    guard totalFrames > 0, sampleRate > 0 else { return [] }
+    let framesPerChunk = max(
+      AVAudioFramePosition(sampleRate * maximumUploadChunkDuration),
+      1
+    )
+    var ranges: [Range<AVAudioFramePosition>] = []
+    var lowerBound: AVAudioFramePosition = 0
+    while lowerBound < totalFrames {
+      let upperBound = min(totalFrames, lowerBound + framesPerChunk)
+      ranges.append(lowerBound..<upperBound)
+      lowerBound = upperBound
     }
+    return ranges
+  }
 
-    let capacity: AVAudioFrameCount = 16_384
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity)
+  static func makeUploadFiles(from sourceURL: URL) throws -> [URL] {
+    let source = try AVAudioFile(forReading: sourceURL)
+    let sourceFormat = source.processingFormat
+    let ranges = uploadChunkRanges(
+      totalFrames: source.length,
+      sampleRate: sourceFormat.sampleRate
+    )
+    guard !ranges.isEmpty else { throw ServiceError.missingAudio }
+
+    var outputURLs: [URL] = []
+    do {
+      for range in ranges {
+        let outputURL = FileManager.default.temporaryDirectory
+          .appendingPathComponent("listentome-transcribe-\(UUID().uuidString)")
+          .appendingPathExtension("m4a")
+        do {
+          try encodeUploadChunk(
+            from: sourceURL,
+            sourceRange: range,
+            to: outputURL
+          )
+        } catch {
+          if FileManager.default.fileExists(atPath: outputURL.path) {
+            _ = try? FileManager.default.trashItem(
+              at: outputURL,
+              resultingItemURL: nil
+            )
+          }
+          throw error
+        }
+        outputURLs.append(outputURL)
+      }
+      return outputURLs
+    } catch {
+      for outputURL in outputURLs {
+        _ = try? FileManager.default.trashItem(
+          at: outputURL,
+          resultingItemURL: nil
+        )
+      }
+      throw error
+    }
+  }
+
+  private static func encodeUploadChunk(
+    from sourceURL: URL,
+    sourceRange: Range<AVAudioFramePosition>,
+    to outputURL: URL
+  ) throws {
+    let input = try AVAudioFile(forReading: sourceURL)
+    input.framePosition = sourceRange.lowerBound
+
+    let outputSettings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: 24_000,
+      AVNumberOfChannelsKey: 1,
+      AVEncoderBitRateKey: 48_000,
+      AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+    ]
+    let output = try AVAudioFile(
+      forWriting: outputURL,
+      settings: outputSettings,
+      commonFormat: .pcmFormatFloat32,
+      interleaved: false
+    )
+    let inputFormat = input.processingFormat
+    let outputFormat = output.processingFormat
+    guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
     else { throw ServiceError.conversionFailed }
 
-    while input.framePosition < input.length {
-      let remaining = AVAudioFrameCount(input.length - input.framePosition)
-      try input.read(into: buffer, frameCount: min(capacity, remaining))
-      guard buffer.frameLength > 0 else { break }
-      try output.write(from: buffer)
+    let inputCapacity: AVAudioFrameCount = 32_768
+    let rateRatio = outputFormat.sampleRate / inputFormat.sampleRate
+    let outputCapacity = max(
+      AVAudioFrameCount((Double(inputCapacity) * rateRatio).rounded(.up)) + 1_024,
+      4_096
+    )
+    guard
+      let inputBuffer = AVAudioPCMBuffer(
+        pcmFormat: inputFormat,
+        frameCapacity: inputCapacity
+      ),
+      let outputBuffer = AVAudioPCMBuffer(
+        pcmFormat: outputFormat,
+        frameCapacity: outputCapacity
+      )
+    else { throw ServiceError.conversionFailed }
+
+    var reachedEnd = false
+    var readError: Error?
+    while true {
+      outputBuffer.frameLength = 0
+      var conversionError: NSError?
+      let status = converter.convert(
+        to: outputBuffer,
+        error: &conversionError
+      ) { _, inputStatus in
+        if reachedEnd {
+          inputStatus.pointee = .endOfStream
+          return nil
+        }
+
+        let remaining = sourceRange.upperBound - input.framePosition
+        guard remaining > 0 else {
+          reachedEnd = true
+          inputStatus.pointee = .endOfStream
+          return nil
+        }
+
+        do {
+          try input.read(
+            into: inputBuffer,
+            frameCount: min(inputCapacity, AVAudioFrameCount(remaining))
+          )
+        } catch {
+          readError = error
+          inputStatus.pointee = .noDataNow
+          return nil
+        }
+        guard inputBuffer.frameLength > 0 else {
+          reachedEnd = true
+          inputStatus.pointee = .endOfStream
+          return nil
+        }
+        inputStatus.pointee = .haveData
+        return inputBuffer
+      }
+
+      if let readError { throw readError }
+      if let conversionError { throw conversionError }
+      if outputBuffer.frameLength > 0 {
+        try output.write(from: outputBuffer)
+      }
+
+      switch status {
+      case .haveData, .inputRanDry:
+        continue
+      case .endOfStream:
+        return
+      case .error:
+        throw ServiceError.conversionFailed
+      @unknown default:
+        throw ServiceError.conversionFailed
+      }
     }
-    return tempURL
   }
 }

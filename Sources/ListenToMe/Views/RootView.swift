@@ -96,7 +96,7 @@ struct RootView: View {
       Image(systemName: "exclamationmark.triangle.fill")
         .foregroundStyle(AppTheme.accent)
       VStack(alignment: .leading, spacing: 2) {
-        Text("Dictation stopped")
+        Text(recording.errorTitle)
           .font(.system(size: 12, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
         Text(message)

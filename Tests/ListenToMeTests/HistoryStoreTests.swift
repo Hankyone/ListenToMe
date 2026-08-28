@@ -59,6 +59,36 @@ final class HistoryStoreTests: XCTestCase {
     XCTAssertEqual(reloaded.entries.first?.transcript, "Claude made this.")
   }
 
+  func testCompletingImportPersistsTranscriptAndOutcome() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ListenToMeTests-\(UUID().uuidString)")
+    defer {
+      _ = try? FileManager.default.trashItem(
+        at: root,
+        resultingItemURL: nil
+      )
+    }
+
+    let store = HistoryStore(rootURL: root)
+    let entry = HistoryEntry(
+      id: UUID(),
+      createdAt: Date(),
+      transcript: "",
+      duration: 8,
+      audioFileName: "imported.m4a",
+      targetApplication: nil,
+      sourceName: "meeting.wav",
+      deliveryOutcome: .audioSaved
+    )
+    store.add(entry)
+    store.completeImport(id: entry.id, transcript: "Imported words.")
+
+    let reloaded = HistoryStore(rootURL: root)
+    XCTAssertEqual(reloaded.entries.first?.transcript, "Imported words.")
+    XCTAssertEqual(reloaded.entries.first?.deliveryOutcome, .imported)
+    XCTAssertEqual(reloaded.entries.first?.shortTargetName, "meeting.wav")
+  }
+
   func testPurgesEntriesOlderThanRetention() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("ListenToMeTests-\(UUID().uuidString)")

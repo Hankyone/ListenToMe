@@ -122,6 +122,13 @@ final class HistoryStore: ObservableObject {
     persist()
   }
 
+  func completeImport(id: UUID, transcript: String) {
+    guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+    entries[index].transcript = transcript
+    entries[index].deliveryOutcome = .imported
+    persist()
+  }
+
   func remove(id: UUID) {
     guard let entry = entries.first(where: { $0.id == id }) else { return }
     let audioURL = audioURL(for: entry)

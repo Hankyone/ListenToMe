@@ -86,10 +86,11 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
   let duration: TimeInterval
   let audioFileName: String
   let targetApplication: TargetApplication?
-  let deliveryOutcome: DeliveryOutcome
+  var sourceName: String? = nil
+  var deliveryOutcome: DeliveryOutcome
 
   var shortTargetName: String {
-    targetApplication?.name ?? "Clipboard"
+    sourceName ?? targetApplication?.name ?? "Clipboard"
   }
 
   /// List/preview copy when the model never returned text.

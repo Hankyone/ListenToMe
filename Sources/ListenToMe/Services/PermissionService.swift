@@ -1,4 +1,3 @@
-import AppKit
 import ApplicationServices
 import Foundation
 import PermissionFlow
@@ -14,7 +13,6 @@ final class PermissionService: ObservableObject {
   private var accessibilityChangeObserver: NSObjectProtocol?
   private var visibilityPollTask: Task<Void, Never>?
   private var pendingAccessibilityRechecks: Task<Void, Never>?
-  private var didPromptAccessibilityThisLaunch = false
 
   init() {
     refresh()
@@ -60,28 +58,6 @@ final class PermissionService: ObservableObject {
         }
       }
     }
-  }
-
-  /// Prompt (once per launch) and open the Accessibility pane.
-  /// Returns immediately after prompting  -  never sleep on the hotkey path.
-  @discardableResult
-  func ensureAccessibilityForPaste(promptIfNeeded: Bool = true) async -> Bool {
-    refresh()
-    if accessibilityGranted { return true }
-
-    if promptIfNeeded, !didPromptAccessibilityThisLaunch {
-      didPromptAccessibilityThisLaunch = true
-      let options =
-        [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-      _ = AXIsProcessTrustedWithOptions(options)
-      openAccessibilitySettings()
-    }
-    refresh()
-    return accessibilityGranted
-  }
-
-  func openAccessibilitySettings() {
-    NSWorkspace.shared.open(PermissionFlowPane.accessibility.settingsURL)
   }
 
   /// Source of truth for paste / AX insert. Do not trust UI caches alone.

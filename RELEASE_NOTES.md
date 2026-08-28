@@ -1,3 +1,10 @@
+## ListenToMe 0.3.60
+
+- Make audio-file transcription a labeled action in History while keeping File menu and drag-and-drop access.
+- Use Gemini 3.5 Transcribe or OpenAI GPT Transcribe for saved audio, matching the provider selected in Setup.
+- Save imported audio to History before cloud processing, and compress and split long files so failures remain recoverable.
+- Stop opening macOS permission settings automatically, and keep local builds signed with a stable Developer ID when one is available.
+
 ## ListenToMe 0.3.59
 
 - Keep Gemini dictation running across the model's ten-minute connection rollover, then verify the final transcript from the saved recording.

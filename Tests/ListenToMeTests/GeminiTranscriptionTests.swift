@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 
 @testable import ListenToMe
@@ -106,6 +107,76 @@ final class GeminiTranscriptionTests: XCTestCase {
     )
   }
 
+  func testFileModelsAreProviderSpecific() {
+    XCTAssertEqual(FileTranscriptionService.openAIModel, "gpt-transcribe")
+    XCTAssertEqual(FileTranscriptionService.geminiModel, "gemini-3.5-transcribe")
+  }
+
+  func testLongAudioIsSplitBelowProviderLimits() {
+    let sampleRate = 16_000.0
+    let totalFrames = AVAudioFramePosition(sampleRate * 91 * 60)
+    let ranges = FileTranscriptionService.uploadChunkRanges(
+      totalFrames: totalFrames,
+      sampleRate: sampleRate
+    )
+
+    XCTAssertEqual(ranges.count, 3)
+    XCTAssertEqual(ranges.first?.lowerBound, 0)
+    XCTAssertEqual(ranges.last?.upperBound, totalFrames)
+    XCTAssertTrue(
+      ranges.allSatisfy {
+        Double($0.count) / sampleRate
+          <= FileTranscriptionService.maximumUploadChunkDuration
+      }
+    )
+  }
+
+  func testAudioIsPreparedAsCompactMonoM4A() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ListenToMeFileTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer {
+      _ = try? FileManager.default.trashItem(at: root, resultingItemURL: nil)
+    }
+
+    let sourceURL = root.appendingPathComponent("stereo.wav")
+    let sourceFormat = try XCTUnwrap(
+      AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
+    )
+    do {
+      let sourceFile = try AVAudioFile(
+        forWriting: sourceURL,
+        settings: sourceFormat.settings
+      )
+      let frameCount: AVAudioFrameCount = 12_000
+      let buffer = try XCTUnwrap(
+        AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount)
+      )
+      buffer.frameLength = frameCount
+      let channels = try XCTUnwrap(buffer.floatChannelData)
+      for channel in 0..<Int(sourceFormat.channelCount) {
+        for frame in 0..<Int(frameCount) {
+          channels[channel][frame] = sin(Float(frame) * 0.05) * 0.1
+        }
+      }
+      try sourceFile.write(from: buffer)
+    }
+
+    let uploads = try FileTranscriptionService.makeUploadFiles(from: sourceURL)
+    defer {
+      for upload in uploads {
+        _ = try? FileManager.default.trashItem(at: upload, resultingItemURL: nil)
+      }
+    }
+
+    XCTAssertEqual(uploads.count, 1)
+    XCTAssertEqual(uploads[0].pathExtension, "m4a")
+    let prepared = try AVAudioFile(forReading: uploads[0])
+    XCTAssertEqual(prepared.processingFormat.channelCount, 1)
+    XCTAssertEqual(prepared.processingFormat.sampleRate, 24_000, accuracy: 1)
+    XCTAssertGreaterThan(prepared.length, 0)
+  }
+
   func testDecodesInteractionOutputText() throws {
     let data = try JSONSerialization.data(withJSONObject: [
       "output_text": "Use Chronicle for this."
@@ -185,6 +256,25 @@ final class GeminiTranscriptionTests: XCTestCase {
     let text = try await FileTranscriptionService.transcribe(
       audioURL: URL(fileURLWithPath: path),
       provider: .gemini,
+      apiKey: key,
+      configuration: configuration
+    )
+    XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+  }
+
+  func testPaidOpenAIFileTranscriptionWhenConfigured() async throws {
+    let environment = ProcessInfo.processInfo.environment
+    guard let key = environment["OPENAI_API_KEY"], !key.isEmpty,
+      let path = environment["LISTENTOME_TEST_AUDIO"], !path.isEmpty
+    else {
+      throw XCTSkip(
+        "Set OPENAI_API_KEY and LISTENTOME_TEST_AUDIO for the paid OpenAI file test."
+      )
+    }
+
+    let text = try await FileTranscriptionService.transcribe(
+      audioURL: URL(fileURLWithPath: path),
+      provider: .openAI,
       apiKey: key,
       configuration: configuration
     )

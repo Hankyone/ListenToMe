@@ -141,7 +141,7 @@ struct StatusHistoryPanel: View {
           .foregroundStyle(AppTheme.accent)
           .padding(.top, 1)
         VStack(alignment: .leading, spacing: 4) {
-          Text("Dictation stopped")
+          Text(recording.errorTitle)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(AppTheme.primaryText)
           Text(message)

@@ -39,6 +39,8 @@ subscriptions.
 
 Audio is streamed through Gemini 3.5 Transcribe Live or OpenAI GPT Live
 Transcribe, depending on the provider selected in Setup.
+Imported audio uses that provider's dedicated recorded-audio model and is saved
+to History before transcription starts.
 The app keeps transcript history and recorded audio locally on your Mac.
 
 ## Develop
@@ -48,7 +50,8 @@ The app keeps transcript history and recorded audio locally on your Mac.
 ./Scripts/package-app.sh
 ```
 
-Local packages are ad-hoc signed. For a Developer ID build on your Mac:
+Local packages use an available Developer ID automatically so macOS permissions
+survive rebuilds, with ad-hoc signing as the fallback. To choose an identity:
 
 ```sh
 export CODESIGN_IDENTITY="Developer ID Application: Anouar Mansour (K32684A887)"

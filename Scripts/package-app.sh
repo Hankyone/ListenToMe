@@ -14,7 +14,15 @@ if ! xcrun --find swift >/dev/null 2>&1; then
     exit 1
 fi
 
-# Optional Developer ID identity. Empty/ad-hoc for local builds.
+# Prefer a stable Developer ID for local builds so macOS permissions survive
+# rebuilds. CI stays ad-hoc unless its release job supplies an identity.
+if [[ -z "${CODESIGN_IDENTITY+x}" && -z "${CI:-}" ]]; then
+    CODESIGN_IDENTITY="$(
+        security find-identity -v -p codesigning 2>/dev/null \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+            | head -1
+    )"
+fi
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 ENTITLEMENTS="$PROJECT_DIR/Resources/ListenToMe.entitlements"
 

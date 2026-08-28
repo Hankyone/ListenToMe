@@ -82,9 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       try? await Task.sleep(nanoseconds: 400_000_000)
       guard let self else { return }
       self.model.permissions.refresh()
-      if !self.model.permissions.accessibilityGranted {
-        _ = await self.model.permissions.ensureAccessibilityForPaste(promptIfNeeded: true)
-      }
       await self.model.recording.prepareMicrophoneAndWait()
       self.model.recording.prepareRealtimeSession()
     }
@@ -191,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if let registeredHotkey, registeredHotkey != spec {
       _ = hotkey.register(registeredHotkey)
     }
+    model.recording.errorTitle = "Shortcut unavailable"
     model.recording.errorMessage =
       "\(spec.display) could not be registered. Another app may already use it. Pick a different shortcut in Setup."
   }
@@ -730,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defer: false
       )
       window.title = "ListenToMe"
-      window.minSize = NSSize(width: 560, height: 420)
+      window.minSize = NSSize(width: 640, height: 420)
       // Hard caps  -  never let SwiftUI content or a huge autosave frame
       // stretch the window across a 4K display.
       window.maxSize = NSSize(width: 1_100, height: 860)

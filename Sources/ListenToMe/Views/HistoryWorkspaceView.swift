@@ -15,9 +15,13 @@ struct HistoryWorkspaceView: View {
         selectedID: $selectedID,
         hotkeyDisplay: hotkeyDisplay,
         isImportingAudio: recording.isImportingAudio,
+        canImportAudio: !recording.phase.isBusy
+          && recording.reprocessingID == nil
+          && !recording.isImportingAudio,
+        importingID: recording.importingID,
         onImportAudio: onImportAudio
       )
-      .frame(minWidth: 240, idealWidth: 300, maxWidth: 360)
+      .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
 
       HistoryDetailView(
         history: history,
@@ -53,6 +57,8 @@ private struct HistoryListView: View {
   @Binding var selectedID: UUID?
   let hotkeyDisplay: String
   let isImportingAudio: Bool
+  let canImportAudio: Bool
+  let importingID: UUID?
   let onImportAudio: () -> Void
   @State private var query = ""
 
@@ -66,20 +72,22 @@ private struct HistoryListView: View {
         Text("History")
           .font(.system(size: 24, weight: .semibold))
           .foregroundStyle(AppTheme.primaryText)
+        Text("\(visibleEntries.count)")
+          .font(.system(size: 12, weight: .medium, design: .monospaced))
+          .foregroundStyle(AppTheme.faintText)
         Spacer()
         Button(action: onImportAudio) {
-          Image(systemName: isImportingAudio ? "ellipsis" : "waveform.badge.plus")
-            .frame(width: 18, height: 18)
+          Label(
+            isImportingAudio ? "Transcribing…" : "Transcribe Audio…",
+            systemImage: isImportingAudio ? "ellipsis" : "waveform.badge.plus"
+          )
         }
         .buttonStyle(QuietButtonStyle())
-        .disabled(isImportingAudio)
+        .disabled(!canImportAudio)
         .help(isImportingAudio ? "Transcribing audio" : "Transcribe audio file")
         .accessibilityLabel(
           isImportingAudio ? "Transcribing audio" : "Transcribe audio file"
         )
-        Text("\(visibleEntries.count)")
-          .font(.system(size: 12, weight: .medium, design: .monospaced))
-          .foregroundStyle(AppTheme.faintText)
       }
       .padding(.horizontal, 18)
       .padding(.top, 20)
@@ -99,6 +107,7 @@ private struct HistoryListView: View {
         EmptyHistoryView(
           hotkeyDisplay: hotkeyDisplay,
           isImportingAudio: isImportingAudio,
+          canImportAudio: canImportAudio,
           onImportAudio: onImportAudio
         )
       } else if visibleEntries.isEmpty {
@@ -114,7 +123,10 @@ private struct HistoryListView: View {
           LazyVStack(spacing: 6) {
             ForEach(visibleEntries) { entry in
               let isSelected = selectedID == entry.id
-              HistoryRow(entry: entry)
+              HistoryRow(
+                entry: entry,
+                isImporting: importingID == entry.id
+              )
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -160,6 +172,7 @@ private struct HistoryListView: View {
                         ).first?.id
                     }
                   }
+                  .disabled(importingID == entry.id)
                 }
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
@@ -182,6 +195,7 @@ private struct HistoryListView: View {
 
 private struct HistoryRow: View {
   let entry: HistoryEntry
+  let isImporting: Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -194,12 +208,17 @@ private struct HistoryRow: View {
           .foregroundStyle(AppTheme.faintText)
           .lineLimit(1)
         Spacer(minLength: 4)
-        Image(systemName: entry.deliveryOutcome.symbolName)
-          .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(AppTheme.faintText)
+        if isImporting {
+          ProgressView()
+            .controlSize(.mini)
+        } else {
+          Image(systemName: entry.deliveryOutcome.symbolName)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(AppTheme.faintText)
+        }
       }
 
-      Text(entry.previewText)
+      Text(isImporting ? "Transcribing audio…" : entry.previewText)
         .font(.system(size: 13))
         .foregroundStyle(
           entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,6 +235,7 @@ private struct HistoryRow: View {
 private struct EmptyHistoryView: View {
   let hotkeyDisplay: String
   let isImportingAudio: Bool
+  let canImportAudio: Bool
   let onImportAudio: () -> Void
 
   var body: some View {
@@ -233,7 +253,7 @@ private struct EmptyHistoryView: View {
         onImportAudio()
       }
       .buttonStyle(RecordActionButtonStyle())
-      .disabled(isImportingAudio)
+      .disabled(!canImportAudio)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(28)
@@ -276,17 +296,27 @@ private struct HistoryDetailView: View {
 
   private func detail(_ entry: HistoryEntry) -> some View {
     let isReprocessing = recording.reprocessingID == entry.id
+    let isImporting = recording.importingID == entry.id
+    let isProcessing = isReprocessing || isImporting
 
     return VStack(alignment: .leading, spacing: 0) {
       ViewThatFits(in: .horizontal) {
         HStack(alignment: .top, spacing: 18) {
-          detailHeading(for: entry)
+          detailHeading(for: entry, isImporting: isImporting)
           Spacer(minLength: 12)
-          detailActions(for: entry, isReprocessing: isReprocessing)
+          detailActions(
+            for: entry,
+            isReprocessing: isReprocessing,
+            isImporting: isImporting
+          )
         }
         VStack(alignment: .leading, spacing: 14) {
-          detailHeading(for: entry)
-          detailActions(for: entry, isReprocessing: isReprocessing)
+          detailHeading(for: entry, isImporting: isImporting)
+          detailActions(
+            for: entry,
+            isReprocessing: isReprocessing,
+            isImporting: isImporting
+          )
         }
       }
       .padding(.horizontal, 28)
@@ -317,7 +347,7 @@ private struct HistoryDetailView: View {
       .lineSpacing(5)
       .foregroundStyle(AppTheme.primaryText)
       .scrollContentBackground(.hidden)
-      .disabled(isReprocessing)
+      .disabled(isProcessing)
       .padding(22)
       .background(
         ChamferedPlate(cut: 10)
@@ -330,11 +360,14 @@ private struct HistoryDetailView: View {
       .padding(.horizontal, 28)
       .padding(.top, 14)
       .padding(.bottom, 28)
-      .opacity(isReprocessing ? 0.65 : 1)
+      .opacity(isProcessing ? 0.65 : 1)
     }
   }
 
-  private func detailHeading(for entry: HistoryEntry) -> some View {
+  private func detailHeading(
+    for entry: HistoryEntry,
+    isImporting: Bool
+  ) -> some View {
     VStack(alignment: .leading, spacing: 5) {
       Text(
         entry.createdAt.formatted(
@@ -346,7 +379,7 @@ private struct HistoryDetailView: View {
       .foregroundStyle(AppTheme.primaryText)
       .lineLimit(2)
       .minimumScaleFactor(0.85)
-      Text(detailLine(for: entry))
+      Text(detailLine(for: entry, isImporting: isImporting))
         .font(.system(size: 12))
         .foregroundStyle(AppTheme.secondaryText)
         .lineLimit(2)
@@ -355,9 +388,12 @@ private struct HistoryDetailView: View {
 
   private func detailActions(
     for entry: HistoryEntry,
-    isReprocessing: Bool
+    isReprocessing: Bool,
+    isImporting: Bool
   ) -> some View {
-    HStack(spacing: 10) {
+    let isProcessing = isReprocessing || isImporting
+
+    return HStack(spacing: 10) {
       Button {
         recording.copyTranscript(entry.transcript)
         didJustCopy = true
@@ -373,7 +409,7 @@ private struct HistoryDetailView: View {
       }
       .buttonStyle(QuietButtonStyle())
       .disabled(
-        isReprocessing
+        isProcessing
           || entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
       )
@@ -384,12 +420,16 @@ private struct HistoryDetailView: View {
         }
       } label: {
         Label(
-          isReprocessing ? "Reprocessing…" : "Reprocess",
+          isProcessing ? "Transcribing…" : "Reprocess",
           systemImage: "arrow.triangle.2.circlepath"
         )
       }
       .buttonStyle(QuietButtonStyle())
-      .disabled(isReprocessing || recording.phase.isBusy)
+      .disabled(
+        isProcessing
+          || recording.isImportingAudio
+          || recording.phase.isBusy
+      )
 
       Button {
         history.remove(id: entry.id)
@@ -398,14 +438,14 @@ private struct HistoryDetailView: View {
         Label("Trash", systemImage: "trash")
       }
       .buttonStyle(QuietButtonStyle(isDestructive: true))
-      .disabled(isReprocessing)
+      .disabled(isProcessing)
     }
   }
 
-  private func detailLine(for entry: HistoryEntry) -> String {
+  private func detailLine(for entry: HistoryEntry, isImporting: Bool) -> String {
     [
       entry.shortTargetName,
-      entry.deliveryOutcome.title,
+      isImporting ? "Transcribing" : entry.deliveryOutcome.title,
     ]
     .joined(separator: " · ")
   }

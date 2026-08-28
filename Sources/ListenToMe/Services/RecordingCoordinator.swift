@@ -17,6 +17,8 @@ final class RecordingCoordinator: ObservableObject {
   @Published private(set) var isHandsFreeLocked = false
   @Published private(set) var reprocessingID: UUID?
   @Published private(set) var isImportingAudio = false
+  @Published private(set) var importingID: UUID?
+  @Published var errorTitle = "Dictation stopped"
   @Published var errorMessage: String?
 
   var onHistoryEntryCreated: ((UUID) -> Void)?
@@ -118,6 +120,7 @@ final class RecordingCoordinator: ObservableObject {
 
     // Paint live UI first. Never run AppleScript / engine.start / TLS on the
     // main thread  -  that froze the overlay at 0:00 with a dead waveform.
+    errorTitle = "Dictation stopped"
     errorMessage = nil
     didFinalizeCurrentRecording = false
     stopRequestedWhileStarting = false
@@ -180,13 +183,6 @@ final class RecordingCoordinator: ObservableObject {
       }
     }
 
-    if !permissions.accessibilityGranted {
-      permissions.openAccessibilitySettings()
-      await failAndPreserve(
-        "Accessibility is off, so text can’t be pasted into the focused field. Enable ListenToMe in System Settings → Privacy & Security → Accessibility, quit ListenToMe from the menu bar, reopen it, then try again."
-      )
-      return
-    }
     guard id == takeID else {
       await abortIncompleteStart()
       return
@@ -391,6 +387,7 @@ final class RecordingCoordinator: ObservableObject {
 
   func importAudio(at sourceURL: URL) async {
     guard !phase.isBusy, reprocessingID == nil, !isImportingAudio else { return }
+    errorTitle = "Audio transcription failed"
     let provider = settings.selectedProvider
     let languageHints = settings.normalizeLanguageTextIfNeeded()
     if languageHints.isBlocking, let message = languageHints.message {
@@ -412,7 +409,10 @@ final class RecordingCoordinator: ObservableObject {
 
     isImportingAudio = true
     errorMessage = nil
-    defer { isImportingAudio = false }
+    defer {
+      importingID = nil
+      isImportingAudio = false
+    }
 
     let hasScopedAccess = sourceURL.startAccessingSecurityScopedResource()
     let importedURL: URL
@@ -426,6 +426,21 @@ final class RecordingCoordinator: ObservableObject {
     if hasScopedAccess { sourceURL.stopAccessingSecurityScopedResource() }
 
     let duration = HistoryStore.audioDuration(at: importedURL)
+    let entryID = UUID()
+    let entry = HistoryEntry(
+      id: entryID,
+      createdAt: Date(),
+      transcript: "",
+      duration: duration,
+      audioFileName: importedURL.lastPathComponent,
+      targetApplication: nil,
+      sourceName: sourceURL.lastPathComponent,
+      deliveryOutcome: .audioSaved
+    )
+    history.add(entry)
+    importingID = entryID
+    onHistoryEntryCreated?(entryID)
+
     let configuration = settings.transcriptionConfiguration
     do {
       let text = try await FileTranscriptionService.transcribe(
@@ -434,29 +449,12 @@ final class RecordingCoordinator: ObservableObject {
         apiKey: apiKey,
         configuration: configuration
       )
-      let entry = HistoryEntry(
-        id: UUID(),
-        createdAt: Date(),
-        transcript: spokenTranscript(text, target: nil, provider: provider),
-        duration: duration,
-        audioFileName: importedURL.lastPathComponent,
-        targetApplication: nil,
-        deliveryOutcome: .imported
+      history.completeImport(
+        id: entryID,
+        transcript: spokenTranscript(text, target: nil, provider: provider)
       )
-      history.add(entry)
-      onHistoryEntryCreated?(entry.id)
     } catch {
-      let entry = HistoryEntry(
-        id: UUID(),
-        createdAt: Date(),
-        transcript: "",
-        duration: duration,
-        audioFileName: importedURL.lastPathComponent,
-        targetApplication: nil,
-        deliveryOutcome: .audioSaved
-      )
-      history.add(entry)
-      onHistoryEntryCreated?(entry.id)
+      errorTitle = "Audio transcription failed"
       errorMessage =
         UserFacingError.message(from: error.localizedDescription)
         + " Your audio is saved in History."
@@ -464,9 +462,10 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   func reprocessHistoryEntry(id: UUID) async {
-    guard reprocessingID == nil else { return }
+    guard reprocessingID == nil, !isImportingAudio, !phase.isBusy else { return }
     guard let entry = history.entry(id: id) else { return }
 
+    errorTitle = "Audio transcription failed"
     let provider = settings.selectedProvider
     let apiKey: String
     do {
@@ -499,8 +498,13 @@ final class RecordingCoordinator: ObservableObject {
         apiKey: apiKey,
         configuration: configuration
       )
-      history.updateTranscript(id: id, transcript: text)
+      if entry.targetApplication == nil {
+        history.completeImport(id: id, transcript: text)
+      } else {
+        history.updateTranscript(id: id, transcript: text)
+      }
     } catch {
+      errorTitle = "Audio transcription failed"
       errorMessage = UserFacingError.message(from: error.localizedDescription)
     }
   }
@@ -943,15 +947,7 @@ final class RecordingCoordinator: ObservableObject {
     await recycleOrDropClient()
 
     latency?.mark("paste")
-    var outcome = await delivery.deliver(finalText, to: targetApplication)
-    if outcome == .copiedNoAccessibility {
-      // Last-chance recovery if TCC flipped mid-session or trust was stale.
-      if await permissions.ensureAccessibilityForPaste() {
-        outcome = await delivery.deliver(finalText, to: targetApplication)
-      } else {
-        permissions.openAccessibilitySettings()
-      }
-    }
+    let outcome = await delivery.deliver(finalText, to: targetApplication)
 
     let duration = max(0, Date().timeIntervalSince(startedAt ?? Date()))
     let entry = HistoryEntry(
@@ -1324,12 +1320,7 @@ final class RecordingCoordinator: ObservableObject {
 
     take.latency?.mark("completed")
     take.latency?.mark("paste")
-    var outcome = await delivery.deliver(text, to: take.targetApplication)
-    if outcome == .copiedNoAccessibility {
-      if await permissions.ensureAccessibilityForPaste() {
-        outcome = await delivery.deliver(text, to: take.targetApplication)
-      }
-    }
+    let outcome = await delivery.deliver(text, to: take.targetApplication)
     let duration = max(0, Date().timeIntervalSince(take.startedAt ?? Date()))
     let entry = HistoryEntry(
       id: UUID(),
