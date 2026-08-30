@@ -17,7 +17,7 @@ final class MediaPauseService: @unchecked Sendable {
   private var mutedOutputBeforeSession: Bool?
   private var didMuteOutput = false
   private var mutedViaCoreAudio = false
-  private var didPauseNowPlaying = false
+  private var shouldResumeNowPlaying = false
   private var appsToResume: [String] = []
   /// Bumped on each begin/end so a late begin can't clobber a finished take.
   private var generation: UInt64 = 0
@@ -40,17 +40,21 @@ final class MediaPauseService: @unchecked Sendable {
     generation &+= 1
     let session = generation
 
-    let pausedNowPlaying = MediaRemoteControl.pause()
+    let playback = MediaRemoteControl.playback()
+    if NowPlayingPausePolicy.shouldSendPause(playback) {
+      _ = MediaRemoteControl.pause()
+    }
+    let resumeNowPlaying = NowPlayingPausePolicy.shouldResume(playback)
     let paused = pausePlayingMediaApps()
     guard session == generation else {
-      if pausedNowPlaying { _ = MediaRemoteControl.play() }
+      if resumeNowPlaying { _ = MediaRemoteControl.play() }
       for app in paused {
         resumeMediaApp(app)
       }
       return
     }
 
-    didPauseNowPlaying = pausedNowPlaying
+    shouldResumeNowPlaying = resumeNowPlaying
     appsToResume = paused
     if let muted = readCoreAudioOutputMuted() {
       mutedOutputBeforeSession = muted
@@ -67,7 +71,7 @@ final class MediaPauseService: @unchecked Sendable {
 
   private func endSync() {
     generation &+= 1
-    if didPauseNowPlaying {
+    if shouldResumeNowPlaying {
       _ = MediaRemoteControl.play()
     }
     if didMuteOutput {
@@ -84,7 +88,7 @@ final class MediaPauseService: @unchecked Sendable {
     mutedOutputBeforeSession = nil
     didMuteOutput = false
     mutedViaCoreAudio = false
-    didPauseNowPlaying = false
+    shouldResumeNowPlaying = false
     appsToResume = []
   }
 
@@ -226,23 +230,79 @@ final class MediaPauseService: @unchecked Sendable {
 /// Pause/play the system Now Playing session (Chrome YouTube, Music, …)
 /// without linking the private MediaRemote framework.
 private enum MediaRemoteControl {
+  private static let frameworkPath =
+    "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
+  private static let handle: UnsafeMutableRawPointer? = dlopen(
+    frameworkPath,
+    RTLD_LAZY
+  )
+  private static let callbackQueue = DispatchQueue(
+    label: "ca.hankyone.ListenToMe.mediaRemote.callback"
+  )
+  /// Touching this registers once; GetNowPlaying can return nothing beforehand.
+  private static let didRegister: Bool = {
+    registerForNotifications()
+    return true
+  }()
+
+  static func playback() -> NowPlayingPausePolicy.Playback {
+    _ = didRegister
+    guard
+      let handle,
+      let symbol = dlsym(
+        handle,
+        "MRMediaRemoteGetNowPlayingApplicationIsPlaying"
+      )
+    else {
+      return .unknown
+    }
+    typealias Handler = @convention(block) (DarwinBoolean) -> Void
+    typealias Get = @convention(c) (DispatchQueue, Handler) -> Void
+    let get = unsafeBitCast(symbol, to: Get.self)
+
+    let box = Box()
+    let lock = DispatchSemaphore(value: 0)
+    let handler: Handler = { isPlaying in
+      box.value = isPlaying.boolValue ? .playing : .idle
+      lock.signal()
+    }
+    get(callbackQueue, handler)
+    if lock.wait(timeout: .now() + 0.3) == .timedOut {
+      return .unknown
+    }
+    return box.value
+  }
+
   static func pause() -> Bool { send(1) }
   static func play() -> Bool { send(0) }
 
-  private static func send(_ command: Int32) -> Bool {
+  private static func registerForNotifications() {
     guard
-      let handle = dlopen(
-        "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote",
-        RTLD_LAZY
+      let handle,
+      let symbol = dlsym(
+        handle,
+        "MRMediaRemoteRegisterForNowPlayingNotifications"
       )
     else {
-      return false
+      return
     }
-    guard let symbol = dlsym(handle, "MRMediaRemoteSendCommand") else {
+    typealias Register = @convention(c) (DispatchQueue) -> Void
+    unsafeBitCast(symbol, to: Register.self)(callbackQueue)
+  }
+
+  private static func send(_ command: Int32) -> Bool {
+    guard
+      let handle,
+      let symbol = dlsym(handle, "MRMediaRemoteSendCommand")
+    else {
       return false
     }
     typealias Send = @convention(c) (Int32, CFDictionary?) -> UInt8
     let send = unsafeBitCast(symbol, to: Send.self)
     return send(command, nil) != 0
+  }
+
+  private final class Box: @unchecked Sendable {
+    var value = NowPlayingPausePolicy.Playback.unknown
   }
 }

@@ -1,3 +1,7 @@
+## ListenToMe 0.3.65
+
+- If a video or song was already paused, leave it paused after you stop dictating instead of starting it.
+
 ## ListenToMe 0.3.64
 
 - Rebuild the microphone after sleep or docking so a USB mic like the SoloCast is live again instead of a silent stale graph.
