@@ -76,6 +76,16 @@ final class RecordingCoordinator: ObservableObject {
     self.permissions = permissions
   }
 
+  /// Sleep, dock, and USB replug leave a warm graph pointing at a dead HAL
+  /// device. Tear it down and rebuild for whatever is preferred right now.
+  func recoverCaptureHardware() {
+    Task { [weak self] in
+      guard let self else { return }
+      await self.audioCapture.invalidateWarmGraph()
+      self.prepareMicrophone()
+    }
+  }
+
   func toggle() async {
     if phase.isBusy {
       await dismissTake()

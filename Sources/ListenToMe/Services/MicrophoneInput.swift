@@ -44,6 +44,38 @@ enum MicrophoneInputCatalog {
     return listInputs().first(where: { $0.id == uid })?.deviceID
   }
 
+  /// Empty UID follows the system default input.
+  static func resolvedDeviceID(forUID uid: String) -> AudioDeviceID? {
+    if uid.isEmpty { return defaultDeviceID(selector: kAudioHardwarePropertyDefaultInputDevice) }
+    return deviceID(forUID: uid)
+  }
+
+  static func defaultOutputDeviceID() -> AudioDeviceID? {
+    defaultDeviceID(selector: kAudioHardwarePropertyDefaultOutputDevice)
+  }
+
+  private static func defaultDeviceID(
+    selector: AudioObjectPropertySelector
+  ) -> AudioDeviceID? {
+    var address = AudioObjectPropertyAddress(
+      mSelector: selector,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceID = AudioDeviceID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    let status = AudioObjectGetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      &size,
+      &deviceID
+    )
+    guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
+    return deviceID
+  }
+
   private static func allDeviceIDs() -> [AudioDeviceID] {
     var address = AudioObjectPropertyAddress(
       mSelector: kAudioHardwarePropertyDevices,

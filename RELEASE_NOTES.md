@@ -1,3 +1,8 @@
+## ListenToMe 0.3.64
+
+- Rebuild the microphone after sleep or docking so a USB mic like the SoloCast is live again instead of a silent stale graph.
+- Pause Now Playing media (YouTube in a browser, Music, Spotify) when a take starts, and mute the current output device.
+
 ## ListenToMe 0.3.63
 
 - Keep the microphone open for 400ms after you release the key so the last words still make it into the transcript.

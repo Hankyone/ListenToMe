@@ -73,6 +73,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     configureHotkey()
 
+    NotificationCenter.default.publisher(
+      for: .listenToMeAudioHardwareChanged
+    )
+    .receive(on: RunLoop.main)
+    .sink { [weak self] _ in
+      self?.model.recording.prepareMicrophone()
+    }
+    .store(in: &subscriptions)
+
+    let workspace = NSWorkspace.shared.notificationCenter
+    workspace.publisher(for: NSWorkspace.didWakeNotification)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _ in
+        self?.model.recording.recoverCaptureHardware()
+      }
+      .store(in: &subscriptions)
+    workspace.publisher(for: NSWorkspace.screensDidWakeNotification)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _ in
+        self?.model.recording.recoverCaptureHardware()
+      }
+      .store(in: &subscriptions)
+
     // Preload start/stop cues so the first hotkey has zero audio hitch.
     DictationSoundService.shared.prepare()
 

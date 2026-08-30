@@ -44,7 +44,11 @@ final class AudioCaptureService: @unchecked Sendable {
   private var mode: Mode = .idle
   private var warmedDeviceUID: String?
   private var warmedSampleRate: Double?
+  private var warmedAudioDeviceID: AudioDeviceID?
   private var coolDownWorkItem: DispatchWorkItem?
+  private var hardwareInvalidateWork: DispatchWorkItem?
+  private var hardwareDirtyDuringRecording = false
+  private var hardwareWatchStarted = false
 
   private var onPCMChunk: ((Data) -> Void)?
   private var onLevel: ((Float) -> Void)?
@@ -66,6 +70,20 @@ final class AudioCaptureService: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return mode == .recording
+  }
+
+  init() {
+    startHardwareWatch()
+  }
+
+  /// Drop a stale warm graph (sleep, dock, USB replug). Safe while idle.
+  func invalidateWarmGraph() async {
+    await withCheckedContinuation { continuation in
+      hardwareQueue.async {
+        self.invalidateWarmGraphSync()
+        continuation.resume()
+      }
+    }
   }
 
   /// Build/prepare the HAL graph without starting capture (no privacy light).
@@ -157,11 +175,19 @@ final class AudioCaptureService: @unchecked Sendable {
     lock.lock()
     let alreadyWarm = mode == .warm || mode == .recording
     let isRecordingNow = mode == .recording
-    let sameDevice = warmedDeviceUID == deviceUID
+    let warmedUID = warmedDeviceUID
+    let warmedID = warmedAudioDeviceID
     let sameSampleRate = warmedSampleRate == sampleRate
     let engine = self.engine
     lock.unlock()
-    if alreadyWarm, sameDevice, sameSampleRate, engine != nil {
+    let liveID = MicrophoneInputCatalog.resolvedDeviceID(forUID: deviceUID)
+    let reusable = WarmCaptureIdentity.canReuse(
+      warmedUID: warmedUID,
+      warmedDeviceID: warmedID,
+      requestedUID: deviceUID,
+      liveDeviceID: liveID
+    )
+    if alreadyWarm, reusable, sameSampleRate, engine != nil {
       targetChunkSize = chunkByteCount
       // Stay prepared, but never leave the mic running while idle.
       if let engine, engine.isRunning, !isRecordingNow {
@@ -197,12 +223,22 @@ final class AudioCaptureService: @unchecked Sendable {
       lock.unlock()
       throw CaptureError.alreadyRecording
     }
-    let canPromoteWarm =
-      mode == .warm
-      && warmedDeviceUID == deviceUID
-      && warmedSampleRate == sampleRate
-      && engine != nil
+    let warmedUID = warmedDeviceUID
+    let warmedID = warmedAudioDeviceID
+    let warmedRate = warmedSampleRate
+    let modeNow = mode
+    let engineExists = engine != nil
     lock.unlock()
+    let canPromoteWarm =
+      modeNow == .warm
+      && warmedRate == sampleRate
+      && engineExists
+      && WarmCaptureIdentity.canReuse(
+        warmedUID: warmedUID,
+        warmedDeviceID: warmedID,
+        requestedUID: deviceUID,
+        liveDeviceID: MicrophoneInputCatalog.resolvedDeviceID(forUID: deviceUID)
+      )
 
     self.onPCMChunk = onPCMChunk
     self.onLevel = onLevel
@@ -210,8 +246,12 @@ final class AudioCaptureService: @unchecked Sendable {
     targetChunkSize = chunkByteCount
 
     if canPromoteWarm {
-      try beginRecording(to: recordingURL)
-      return
+      do {
+        try beginRecording(to: recordingURL, deviceUID: deviceUID)
+        return
+      } catch {
+        tearDownEngine()
+      }
     }
 
     tearDownEngine()
@@ -238,6 +278,12 @@ final class AudioCaptureService: @unchecked Sendable {
 
     onPCMChunk = nil
     onLevel = nil
+    if hardwareDirtyDuringRecording {
+      hardwareDirtyDuringRecording = false
+      tearDownEngine()
+      postHardwareInvalidated()
+      return remainder.isEmpty ? nil : remainder
+    }
     // Stop capture so the orange mic indicator goes out; keep the graph for
     // a fast engine.start() on the next hotkey.
     if let engine, engine.isRunning {
@@ -274,8 +320,12 @@ final class AudioCaptureService: @unchecked Sendable {
     onError = nil
   }
 
-  private func beginRecording(to recordingURL: URL) throws {
+  private func beginRecording(to recordingURL: URL, deviceUID: String) throws {
     guard let engine else { throw CaptureError.deviceUnavailable }
+    if let deviceID = MicrophoneInputCatalog.resolvedDeviceID(forUID: deviceUID) {
+      try selectInputDevice(deviceID, on: engine.inputNode)
+      warmedAudioDeviceID = deviceID
+    }
     let input = engine.inputNode
     let hardwareFormat = input.inputFormat(forBus: 0)
     guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
@@ -313,9 +363,9 @@ final class AudioCaptureService: @unchecked Sendable {
   ) throws {
     let engine = AVAudioEngine()
     let input = engine.inputNode
-
-    if let deviceID = MicrophoneInputCatalog.deviceID(forUID: deviceUID) {
-      try selectInputDevice(deviceID, on: input)
+    let resolvedID = MicrophoneInputCatalog.resolvedDeviceID(forUID: deviceUID)
+    if let resolvedID {
+      try selectInputDevice(resolvedID, on: input)
     }
 
     let hardwareFormat = input.inputFormat(forBus: 0)
@@ -359,6 +409,7 @@ final class AudioCaptureService: @unchecked Sendable {
     lastLevelUpdate = .distantPast
     warmedDeviceUID = deviceUID
     warmedSampleRate = sampleRate
+    warmedAudioDeviceID = resolvedID
     mode = recordingURL == nil ? .warm : .recording
 
     input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) {
@@ -417,6 +468,7 @@ final class AudioCaptureService: @unchecked Sendable {
     converter = nil
     warmedDeviceUID = nil
     warmedSampleRate = nil
+    warmedAudioDeviceID = nil
     lock.lock()
     mode = .idle
     pendingPCM.removeAll(keepingCapacity: false)
@@ -442,6 +494,60 @@ final class AudioCaptureService: @unchecked Sendable {
     )
     guard status == noErr else {
       throw CaptureError.deviceUnavailable
+    }
+  }
+
+  private func startHardwareWatch() {
+    guard !hardwareWatchStarted else { return }
+    hardwareWatchStarted = true
+    listenForHardwareProperty(kAudioHardwarePropertyDevices)
+    listenForHardwareProperty(kAudioHardwarePropertyDefaultInputDevice)
+  }
+
+  private func listenForHardwareProperty(_ selector: AudioObjectPropertySelector) {
+    var address = AudioObjectPropertyAddress(
+      mSelector: selector,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    AudioObjectAddPropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      hardwareQueue
+    ) { [weak self] _, _ in
+      self?.scheduleHardwareInvalidate()
+    }
+  }
+
+  private func scheduleHardwareInvalidate() {
+    hardwareInvalidateWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      self?.invalidateWarmGraphSync()
+    }
+    hardwareInvalidateWork = work
+    hardwareQueue.asyncAfter(deadline: .now() + 0.4, execute: work)
+  }
+
+  private func invalidateWarmGraphSync() {
+    lock.lock()
+    let recording = mode == .recording
+    lock.unlock()
+    if recording {
+      hardwareDirtyDuringRecording = true
+      return
+    }
+    coolDownWorkItem?.cancel()
+    coolDownWorkItem = nil
+    tearDownEngine()
+    postHardwareInvalidated()
+  }
+
+  private func postHardwareInvalidated() {
+    DispatchQueue.main.async {
+      NotificationCenter.default.post(
+        name: .listenToMeAudioHardwareChanged,
+        object: nil
+      )
     }
   }
 
@@ -517,4 +623,10 @@ final class AudioCaptureService: @unchecked Sendable {
     let decibels = 20 * log10(rms)
     return min(1, max(0, (decibels + 55) / 55))
   }
+}
+
+extension Notification.Name {
+  static let listenToMeAudioHardwareChanged = Notification.Name(
+    "ca.hankyone.ListenToMe.audioHardwareChanged"
+  )
 }

@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.63</string>
+	<string>0.3.64</string>
 	<key>CFBundleVersion</key>
-	<string>66</string>
+	<string>67</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
@@ -29,7 +29,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>ListenToMe pauses Music, Spotify, and similar apps while you dictate, and may control System Settings while guiding permission setup.</string>
+	<string>ListenToMe pauses playing media (including YouTube) and Music, Spotify, and similar apps while you dictate, and may control System Settings while guiding permission setup.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>

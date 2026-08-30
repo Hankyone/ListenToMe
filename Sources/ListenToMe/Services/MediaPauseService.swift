@@ -1,8 +1,10 @@
 import AppKit
+import CoreAudio
+import Darwin
 import Foundation
 
-/// Pauses common media apps and mutes system output while dictating, then
-/// restores both when the take ends (Handy-style ducking + media pause).
+/// Pauses Now Playing (YouTube in Chrome, Music, Spotify, …) and mutes
+/// system output while dictating, then restores both when the take ends.
 ///
 /// All `osascript` work runs on a utility queue  -  never the main thread.
 /// `NSAppleScript.execute` on MainActor was freezing the overlay timer and
@@ -14,6 +16,8 @@ final class MediaPauseService: @unchecked Sendable {
   )
   private var mutedOutputBeforeSession: Bool?
   private var didMuteOutput = false
+  private var mutedViaCoreAudio = false
+  private var didPauseNowPlaying = false
   private var appsToResume: [String] = []
   /// Bumped on each begin/end so a late begin can't clobber a finished take.
   private var generation: UInt64 = 0
@@ -36,31 +40,51 @@ final class MediaPauseService: @unchecked Sendable {
     generation &+= 1
     let session = generation
 
+    let pausedNowPlaying = MediaRemoteControl.pause()
     let paused = pausePlayingMediaApps()
     guard session == generation else {
-      // Take already ended while we were scripting  -  put media back.
+      if pausedNowPlaying { _ = MediaRemoteControl.play() }
       for app in paused {
         resumeMediaApp(app)
       }
       return
     }
 
+    didPauseNowPlaying = pausedNowPlaying
     appsToResume = paused
-    mutedOutputBeforeSession = readOutputMuted()
-    setOutputMuted(true)
+    if let muted = readCoreAudioOutputMuted() {
+      mutedOutputBeforeSession = muted
+      mutedViaCoreAudio = setCoreAudioOutputMuted(true)
+    } else {
+      mutedOutputBeforeSession = readOutputMuted()
+      mutedViaCoreAudio = false
+    }
+    if !mutedViaCoreAudio {
+      setOutputMuted(true)
+    }
     didMuteOutput = true
   }
 
   private func endSync() {
     generation &+= 1
+    if didPauseNowPlaying {
+      _ = MediaRemoteControl.play()
+    }
     if didMuteOutput {
-      setOutputMuted(mutedOutputBeforeSession ?? false)
+      let wasMuted = mutedOutputBeforeSession ?? false
+      if mutedViaCoreAudio {
+        _ = setCoreAudioOutputMuted(wasMuted)
+      } else {
+        setOutputMuted(wasMuted)
+      }
     }
     for app in appsToResume {
       resumeMediaApp(app)
     }
     mutedOutputBeforeSession = nil
     didMuteOutput = false
+    mutedViaCoreAudio = false
+    didPauseNowPlaying = false
     appsToResume = []
   }
 
@@ -133,6 +157,50 @@ final class MediaPauseService: @unchecked Sendable {
     _ = runOSASCRIPT(script)
   }
 
+  private func defaultOutputMuteAddress() -> AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyMute,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+  }
+
+  private func readCoreAudioOutputMuted() -> Bool? {
+    guard let deviceID = MicrophoneInputCatalog.defaultOutputDeviceID() else {
+      return nil
+    }
+    var address = defaultOutputMuteAddress()
+    var value: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &size,
+      &value
+    )
+    guard status == noErr else { return nil }
+    return value != 0
+  }
+
+  private func setCoreAudioOutputMuted(_ muted: Bool) -> Bool {
+    guard let deviceID = MicrophoneInputCatalog.defaultOutputDeviceID() else {
+      return false
+    }
+    var address = defaultOutputMuteAddress()
+    var value: UInt32 = muted ? 1 : 0
+    let size = UInt32(MemoryLayout<UInt32>.size)
+    return AudioObjectSetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      size,
+      &value
+    ) == noErr
+  }
+
   /// Prefer `/usr/bin/osascript` over `NSAppleScript` so this never has to
   /// touch the main thread (NSAppleScript is historically main-bound).
   private func runOSASCRIPT(_ source: String) -> String? {
@@ -152,5 +220,29 @@ final class MediaPauseService: @unchecked Sendable {
     guard process.terminationStatus == 0 else { return nil }
     let data = stdout.fileHandleForReading.readDataToEndOfFile()
     return String(data: data, encoding: .utf8)
+  }
+}
+
+/// Pause/play the system Now Playing session (Chrome YouTube, Music, …)
+/// without linking the private MediaRemote framework.
+private enum MediaRemoteControl {
+  static func pause() -> Bool { send(1) }
+  static func play() -> Bool { send(0) }
+
+  private static func send(_ command: Int32) -> Bool {
+    guard
+      let handle = dlopen(
+        "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote",
+        RTLD_LAZY
+      )
+    else {
+      return false
+    }
+    guard let symbol = dlsym(handle, "MRMediaRemoteSendCommand") else {
+      return false
+    }
+    typealias Send = @convention(c) (Int32, CFDictionary?) -> UInt8
+    let send = unsafeBitCast(symbol, to: Send.self)
+    return send(command, nil) != 0
   }
 }
