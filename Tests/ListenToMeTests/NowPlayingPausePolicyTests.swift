@@ -3,18 +3,34 @@ import XCTest
 @testable import ListenToMe
 
 final class NowPlayingPausePolicyTests: XCTestCase {
-  func testPlayingIsPausedAndResumed() {
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPause(.playing))
-    XCTAssertTrue(NowPlayingPausePolicy.shouldResume(.playing))
+  func testPlayingIsResumed() {
+    XCTAssertTrue(NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: true))
   }
 
-  func testIdleIsLeftAlone() {
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPause(.idle))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldResume(.idle))
+  func testIdleIsNotResumed() {
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: false)
+    )
   }
 
-  func testUnknownPausesButDoesNotResume() {
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPause(.unknown))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldResume(.unknown))
+  func testMediaKeyOnlyIfRemotePauseDidNotStick() {
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        wasPlaying: true,
+        stillPlayingAfterRemotePause: true
+      )
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        wasPlaying: true,
+        stillPlayingAfterRemotePause: false
+      )
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        wasPlaying: false,
+        stillPlayingAfterRemotePause: true
+      )
+    )
   }
 }

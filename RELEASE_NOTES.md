@@ -1,3 +1,7 @@
+## ListenToMe 0.3.66
+
+- Pause the video or song that is actually playing when you start dictating, including YouTube in a browser, then start it again when you stop. Already-paused media stays paused.
+
 ## ListenToMe 0.3.65
 
 - If a video or song was already paused, leave it paused after you stop dictating instead of starting it.

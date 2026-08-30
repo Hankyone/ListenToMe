@@ -1,26 +1,35 @@
 import AppKit
+import AudioToolbox
 import CoreAudio
 import Darwin
 import Foundation
 
-/// Pauses Now Playing (YouTube in Chrome, Music, Spotify, …) and mutes
-/// system output while dictating, then restores both when the take ends.
+/// Pauses Now Playing, then the hardware play/pause key if a browser ignored
+/// the command, and mutes output so dictation is never talking over a video.
 ///
-/// All `osascript` work runs on a utility queue  -  never the main thread.
-/// `NSAppleScript.execute` on MainActor was freezing the overlay timer and
-/// waveform for 5–8s at the start of every take.
+/// All AppleScript and MediaRemote waits run on a utility queue  -  never the
+/// main thread. `NSAppleScript.execute` on MainActor froze the overlay.
 final class MediaPauseService: @unchecked Sendable {
   private let queue = DispatchQueue(
     label: "ca.hankyone.ListenToMe.mediaPause",
-    qos: .utility
+    qos: .userInitiated
   )
   private var mutedOutputBeforeSession: Bool?
+  private var volumeBeforeSession: Float?
   private var didMuteOutput = false
+  private var didDuckVolume = false
   private var mutedViaCoreAudio = false
   private var shouldResumeNowPlaying = false
+  private var didPauseWithMediaKey = false
   private var appsToResume: [String] = []
   /// Bumped on each begin/end so a late begin can't clobber a finished take.
   private var generation: UInt64 = 0
+
+  init() {
+    queue.async {
+      MediaRemoteControl.prepare()
+    }
+  }
 
   func begin(onFinished: (() -> Void)? = nil) {
     queue.async { [weak self] in
@@ -40,56 +49,92 @@ final class MediaPauseService: @unchecked Sendable {
     generation &+= 1
     let session = generation
 
-    let playback = MediaRemoteControl.playback()
-    if NowPlayingPausePolicy.shouldSendPause(playback) {
-      _ = MediaRemoteControl.pause()
+    // Mute first so a slow pause still ducks YouTube immediately.
+    muteOutput()
+
+    let wasPlaying = MediaRemoteControl.isPlaying()
+    if wasPlaying {
+      MediaRemoteControl.pause()
+      Thread.sleep(forTimeInterval: 0.08)
+    } else {
+      // No-op when idle. Catches a false-negative Now Playing read.
+      MediaRemoteControl.pause()
     }
-    let resumeNowPlaying = NowPlayingPausePolicy.shouldResume(playback)
-    let paused = pausePlayingMediaApps()
+    let pausedApps = pausePlayingMediaApps()
+    var usedKey = false
+    if NowPlayingPausePolicy.shouldSendMediaKey(
+      wasPlaying: wasPlaying,
+      stillPlayingAfterRemotePause: MediaRemoteControl.isPlaying()
+    ) {
+      MediaKey.playPause()
+      usedKey = true
+    }
+
     guard session == generation else {
-      if resumeNowPlaying { _ = MediaRemoteControl.play() }
-      for app in paused {
+      if NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: wasPlaying) {
+        MediaKey.playPause()
+      }
+      for app in pausedApps {
         resumeMediaApp(app)
       }
+      restoreOutput()
       return
     }
 
-    shouldResumeNowPlaying = resumeNowPlaying
-    appsToResume = paused
-    if let muted = readCoreAudioOutputMuted() {
-      mutedOutputBeforeSession = muted
-      mutedViaCoreAudio = setCoreAudioOutputMuted(true)
-    } else {
-      mutedOutputBeforeSession = readOutputMuted()
-      mutedViaCoreAudio = false
-    }
-    if !mutedViaCoreAudio {
-      setOutputMuted(true)
-    }
-    didMuteOutput = true
+    shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
+      wasPlaying: wasPlaying
+    )
+    didPauseWithMediaKey = usedKey
+    appsToResume = pausedApps
   }
 
   private func endSync() {
     generation &+= 1
-    if shouldResumeNowPlaying {
-      _ = MediaRemoteControl.play()
-    }
-    if didMuteOutput {
-      let wasMuted = mutedOutputBeforeSession ?? false
-      if mutedViaCoreAudio {
-        _ = setCoreAudioOutputMuted(wasMuted)
-      } else {
-        setOutputMuted(wasMuted)
-      }
+    if shouldResumeNowPlaying || didPauseWithMediaKey {
+      MediaKey.playPause()
     }
     for app in appsToResume {
       resumeMediaApp(app)
     }
-    mutedOutputBeforeSession = nil
-    didMuteOutput = false
-    mutedViaCoreAudio = false
+    restoreOutput()
     shouldResumeNowPlaying = false
+    didPauseWithMediaKey = false
     appsToResume = []
+  }
+
+  private func muteOutput() {
+    let osMuted = readOutputMuted()
+    let caMuted = readCoreAudioOutputMuted()
+    mutedOutputBeforeSession = osMuted ?? caMuted ?? false
+    volumeBeforeSession = readVirtualMainVolume()
+
+    setOutputMuted(true)
+    mutedViaCoreAudio = setCoreAudioOutputMuted(true)
+
+    let nowMuted = readOutputMuted() == true || readCoreAudioOutputMuted() == true
+    if !nowMuted, let volume = volumeBeforeSession, volume > 0 {
+      didDuckVolume = setVirtualMainVolume(0)
+    } else {
+      didDuckVolume = false
+    }
+    didMuteOutput = true
+  }
+
+  private func restoreOutput() {
+    guard didMuteOutput else { return }
+    let wasMuted = mutedOutputBeforeSession ?? false
+    if didDuckVolume, let volume = volumeBeforeSession {
+      _ = setVirtualMainVolume(volume)
+    }
+    if mutedViaCoreAudio {
+      _ = setCoreAudioOutputMuted(wasMuted)
+    }
+    setOutputMuted(wasMuted)
+    mutedOutputBeforeSession = nil
+    volumeBeforeSession = nil
+    didMuteOutput = false
+    didDuckVolume = false
+    mutedViaCoreAudio = false
   }
 
   private func pausePlayingMediaApps() -> [String] {
@@ -169,11 +214,20 @@ final class MediaPauseService: @unchecked Sendable {
     )
   }
 
+  private func virtualMainVolumeAddress() -> AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(
+      mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+  }
+
   private func readCoreAudioOutputMuted() -> Bool? {
     guard let deviceID = MicrophoneInputCatalog.defaultOutputDeviceID() else {
       return nil
     }
     var address = defaultOutputMuteAddress()
+    guard AudioObjectHasProperty(deviceID, &address) else { return nil }
     var value: UInt32 = 0
     var size = UInt32(MemoryLayout<UInt32>.size)
     let status = AudioObjectGetPropertyData(
@@ -193,8 +247,58 @@ final class MediaPauseService: @unchecked Sendable {
       return false
     }
     var address = defaultOutputMuteAddress()
+    guard AudioObjectHasProperty(deviceID, &address) else { return false }
+    var settable = DarwinBoolean(false)
+    guard AudioObjectIsPropertySettable(deviceID, &address, &settable) == noErr,
+      settable.boolValue
+    else {
+      return false
+    }
     var value: UInt32 = muted ? 1 : 0
     let size = UInt32(MemoryLayout<UInt32>.size)
+    return AudioObjectSetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      size,
+      &value
+    ) == noErr
+  }
+
+  private func readVirtualMainVolume() -> Float? {
+    guard let deviceID = MicrophoneInputCatalog.defaultOutputDeviceID() else {
+      return nil
+    }
+    var address = virtualMainVolumeAddress()
+    guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+    var value: Float32 = 0
+    var size = UInt32(MemoryLayout<Float32>.size)
+    let status = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &size,
+      &value
+    )
+    return status == noErr ? value : nil
+  }
+
+  private func setVirtualMainVolume(_ volume: Float) -> Bool {
+    guard let deviceID = MicrophoneInputCatalog.defaultOutputDeviceID() else {
+      return false
+    }
+    var address = virtualMainVolumeAddress()
+    guard AudioObjectHasProperty(deviceID, &address) else { return false }
+    var settable = DarwinBoolean(false)
+    guard AudioObjectIsPropertySettable(deviceID, &address, &settable) == noErr,
+      settable.boolValue
+    else {
+      return false
+    }
+    var value = Float32(min(max(volume, 0), 1))
+    let size = UInt32(MemoryLayout<Float32>.size)
     return AudioObjectSetPropertyData(
       deviceID,
       &address,
@@ -227,82 +331,106 @@ final class MediaPauseService: @unchecked Sendable {
   }
 }
 
-/// Pause/play the system Now Playing session (Chrome YouTube, Music, …)
-/// without linking the private MediaRemote framework.
+/// Hardware play/pause key. Chromium listens to this and ignores MediaRemote
+/// play. It toggles, so callers must only send it when playback was active.
+private enum MediaKey {
+  private static let playPauseKey: UInt32 = 16
+
+  static func playPause() {
+    let post = {
+      send(down: true)
+      send(down: false)
+    }
+    if Thread.isMainThread {
+      post()
+    } else {
+      DispatchQueue.main.sync(execute: post)
+    }
+  }
+
+  private static func send(down: Bool) {
+    let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
+    let data1 = Int((playPauseKey << 16) | ((down ? 0xA : 0xB) << 8))
+    let event = NSEvent.otherEvent(
+      with: .systemDefined,
+      location: .zero,
+      modifierFlags: flags,
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      subtype: 8,
+      data1: data1,
+      data2: -1
+    )
+    event?.cgEvent?.post(tap: .cghidEventTap)
+  }
+}
+
+/// Pause/play the system Now Playing session without linking MediaRemote.
 private enum MediaRemoteControl {
   private static let frameworkPath =
     "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
+
+  private typealias IsPlaying = @convention(c) (
+    DispatchQueue, @escaping (Bool) -> Void
+  ) -> Void
+  private typealias SendCommand = @convention(c) (Int32, CFDictionary?) -> Void
+  private typealias Register = @convention(c) (DispatchQueue) -> Void
+
   private static let handle: UnsafeMutableRawPointer? = dlopen(
     frameworkPath,
-    RTLD_LAZY
+    RTLD_NOW
   )
-  private static let callbackQueue = DispatchQueue(
-    label: "ca.hankyone.ListenToMe.mediaRemote.callback"
-  )
-  /// Touching this registers once; GetNowPlaying can return nothing beforehand.
+  private static let isPlayingFn: IsPlaying? = {
+    guard let handle, let symbol = dlsym(
+      handle,
+      "MRMediaRemoteGetNowPlayingApplicationIsPlaying"
+    ) else {
+      return nil
+    }
+    return unsafeBitCast(symbol, to: IsPlaying.self)
+  }()
+  private static let sendFn: SendCommand? = {
+    guard let handle, let symbol = dlsym(handle, "MRMediaRemoteSendCommand")
+    else {
+      return nil
+    }
+    return unsafeBitCast(symbol, to: SendCommand.self)
+  }()
   private static let didRegister: Bool = {
-    registerForNotifications()
+    guard let handle, let symbol = dlsym(
+      handle,
+      "MRMediaRemoteRegisterForNowPlayingNotifications"
+    ) else {
+      return false
+    }
+    unsafeBitCast(symbol, to: Register.self)(DispatchQueue.main)
     return true
   }()
 
-  static func playback() -> NowPlayingPausePolicy.Playback {
+  static func prepare() {
+    _ = handle
     _ = didRegister
-    guard
-      let handle,
-      let symbol = dlsym(
-        handle,
-        "MRMediaRemoteGetNowPlayingApplicationIsPlaying"
-      )
-    else {
-      return .unknown
-    }
-    typealias Handler = @convention(block) (DarwinBoolean) -> Void
-    typealias Get = @convention(c) (DispatchQueue, Handler) -> Void
-    let get = unsafeBitCast(symbol, to: Get.self)
+  }
 
+  static func isPlaying() -> Bool {
+    _ = didRegister
+    guard let isPlayingFn else { return false }
     let box = Box()
     let lock = DispatchSemaphore(value: 0)
-    let handler: Handler = { isPlaying in
-      box.value = isPlaying.boolValue ? .playing : .idle
+    isPlayingFn(DispatchQueue.main) { playing in
+      box.value = playing
       lock.signal()
     }
-    get(callbackQueue, handler)
-    if lock.wait(timeout: .now() + 0.3) == .timedOut {
-      return .unknown
-    }
+    _ = lock.wait(timeout: .now() + 0.8)
     return box.value
   }
 
-  static func pause() -> Bool { send(1) }
-  static func play() -> Bool { send(0) }
-
-  private static func registerForNotifications() {
-    guard
-      let handle,
-      let symbol = dlsym(
-        handle,
-        "MRMediaRemoteRegisterForNowPlayingNotifications"
-      )
-    else {
-      return
-    }
-    typealias Register = @convention(c) (DispatchQueue) -> Void
-    unsafeBitCast(symbol, to: Register.self)(callbackQueue)
-  }
-
-  private static func send(_ command: Int32) -> Bool {
-    guard
-      let handle,
-      let symbol = dlsym(handle, "MRMediaRemoteSendCommand")
-    else {
-      return false
-    }
-    typealias Send = @convention(c) (Int32, CFDictionary?) -> UInt8
-    let send = unsafeBitCast(symbol, to: Send.self)
-    return send(command, nil) != 0
+  static func pause() {
+    sendFn?(1, nil)
   }
 
   private final class Box: @unchecked Sendable {
-    var value = NowPlayingPausePolicy.Playback.unknown
+    var value = false
   }
 }
