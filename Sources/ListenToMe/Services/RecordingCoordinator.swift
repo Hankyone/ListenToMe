@@ -150,9 +150,7 @@ final class RecordingCoordinator: ObservableObject {
     latency?.mark("ui")
     startElapsedTimer()
     let trace = latency
-    mediaPause.begin {
-      trace?.mark("media_pause")
-    }
+    async let pausedPlayingMedia = mediaPause.arm()
     await Task.yield()
     guard id == takeID else {
       await abortIncompleteStart()
@@ -202,6 +200,20 @@ final class RecordingCoordinator: ObservableObject {
     do {
       let recordingURL = try history.newRecordingURL()
       self.recordingURL = recordingURL
+      guard id == takeID else {
+        await abortIncompleteStart()
+        return
+      }
+      if stopRequestedWhileStarting {
+        await abortIncompleteStart()
+        return
+      }
+
+      let didPausePlayback = await pausedPlayingMedia
+      trace?.mark("media_pause")
+      if didPausePlayback {
+        trace?.note("media", "held_until_paused")
+      }
       guard id == takeID else {
         await abortIncompleteStart()
         return

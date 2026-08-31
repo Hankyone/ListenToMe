@@ -9,6 +9,12 @@ enum NowPlayingPausePolicy {
     wasPlaying
   }
 
+  /// Hold the mic only when Now Playing was actually playing. Idle takes
+  /// must not wait on pause.
+  static func shouldHoldMicUntilPaused(wasPlaying: Bool) -> Bool {
+    wasPlaying
+  }
+
   static func shouldSendMediaKey(
     wasPlaying: Bool,
     stillPlayingAfterRemotePause: Bool

@@ -1,3 +1,7 @@
+## ListenToMe 0.3.72
+
+- If a video or song is playing, wait until it is paused before the microphone opens. If nothing is playing, start listening immediately.
+
 ## ListenToMe 0.3.71
 
 - Start the microphone immediately. Pausing a video no longer delays the start of a take when nothing is playing.

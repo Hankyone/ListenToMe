@@ -13,6 +13,15 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
+  func testHoldsMicOnlyWhenSomethingWasPlaying() {
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: true)
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: false)
+    )
+  }
+
   func testMediaKeyOnlyIfRemotePauseDidNotStick() {
     XCTAssertTrue(
       NowPlayingPausePolicy.shouldSendMediaKey(

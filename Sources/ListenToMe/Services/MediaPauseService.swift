@@ -31,10 +31,14 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  func begin(onFinished: (() -> Void)? = nil) {
-    queue.async { [weak self] in
-      self?.beginSync()
-      onFinished?()
+  /// Mutes output, and if something is playing, pauses it and waits until
+  /// playback has actually stopped. Returns true only in that playing case
+  /// so idle takes can open the mic immediately.
+  func arm() async -> Bool {
+    await withCheckedContinuation { continuation in
+      queue.async { [weak self] in
+        continuation.resume(returning: self?.armSync() ?? false)
+      }
     }
   }
 
@@ -44,48 +48,58 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  private func beginSync() {
+  private func armSync() -> Bool {
     endSync()
     generation &+= 1
     let session = generation
 
-    // Mute first so a slow pause still ducks YouTube immediately.
-    muteOutput()
-
+    muteFast()
     let wasPlaying = MediaRemoteControl.isPlaying()
-    if wasPlaying {
-      MediaRemoteControl.pause()
-      Thread.sleep(forTimeInterval: 0.08)
-    } else {
-      // No-op when idle. Catches a false-negative Now Playing read.
-      MediaRemoteControl.pause()
+    if !NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: wasPlaying) {
+      shouldResumeNowPlaying = false
+      didPauseWithMediaKey = false
+      appsToResume = []
+      queue.async { [weak self] in
+        guard let self, self.generation == session else { return }
+        self.appsToResume = self.pausePlayingMediaApps()
+      }
+      return false
     }
-    let pausedApps = pausePlayingMediaApps()
+
+    MediaRemoteControl.pause()
+    Thread.sleep(forTimeInterval: 0.05)
     var usedKey = false
     if NowPlayingPausePolicy.shouldSendMediaKey(
-      wasPlaying: wasPlaying,
+      wasPlaying: true,
       stillPlayingAfterRemotePause: MediaRemoteControl.isPlaying()
     ) {
       MediaKey.playPause()
       usedKey = true
     }
+    waitUntilPaused()
+    let pausedApps = pausePlayingMediaApps()
 
     guard session == generation else {
-      if NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: wasPlaying) {
-        MediaKey.playPause()
-      }
+      if usedKey { MediaKey.playPause() }
       for app in pausedApps {
         resumeMediaApp(app)
       }
       restoreOutput()
-      return
+      return false
     }
 
-    shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
-      wasPlaying: wasPlaying
-    )
+    shouldResumeNowPlaying = true
     didPauseWithMediaKey = usedKey
     appsToResume = pausedApps
+    return true
+  }
+
+  private func waitUntilPaused() {
+    let deadline = Date().addingTimeInterval(0.25)
+    while Date() < deadline {
+      if !MediaRemoteControl.isPlaying() { return }
+      Thread.sleep(forTimeInterval: 0.04)
+    }
   }
 
   private func endSync() {
@@ -102,17 +116,15 @@ final class MediaPauseService: @unchecked Sendable {
     appsToResume = []
   }
 
-  private func muteOutput() {
+  /// Core Audio only  -  no osascript, so idle takes are not held up.
+  private func muteFast() {
     let caMuted = readCoreAudioOutputMuted()
     volumeBeforeSession = readVirtualMainVolume()
     mutedViaCoreAudio = setCoreAudioOutputMuted(true)
-    mutedOutputBeforeSession = caMuted ?? readOutputMuted() ?? false
-    if !mutedViaCoreAudio {
-      setOutputMuted(true)
-    }
-
-    let nowMuted = readCoreAudioOutputMuted() == true || readOutputMuted() == true
-    if !nowMuted, let volume = volumeBeforeSession, volume > 0 {
+    mutedOutputBeforeSession = caMuted ?? false
+    if mutedViaCoreAudio {
+      didDuckVolume = false
+    } else if let volume = volumeBeforeSession, volume > 0 {
       didDuckVolume = setVirtualMainVolume(0)
     } else {
       didDuckVolume = false
