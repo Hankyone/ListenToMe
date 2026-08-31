@@ -31,10 +31,13 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  func begin(onFinished: (() -> Void)? = nil) {
-    queue.async { [weak self] in
-      self?.beginSync()
-      onFinished?()
+  /// Mutes, pauses playing media, and reports whether anything was playing
+  /// so the mic can wait a beat before opening.
+  func begin() async -> Bool {
+    await withCheckedContinuation { continuation in
+      queue.async { [weak self] in
+        continuation.resume(returning: self?.beginSync() ?? false)
+      }
     }
   }
 
@@ -44,7 +47,7 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  private func beginSync() {
+  private func beginSync() -> Bool {
     endSync()
     generation &+= 1
     let session = generation
@@ -69,6 +72,7 @@ final class MediaPauseService: @unchecked Sendable {
       MediaKey.playPause()
       usedKey = true
     }
+    let didPausePlayback = wasPlaying || usedKey || !pausedApps.isEmpty
 
     guard session == generation else {
       if NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: wasPlaying) {
@@ -78,7 +82,7 @@ final class MediaPauseService: @unchecked Sendable {
         resumeMediaApp(app)
       }
       restoreOutput()
-      return
+      return false
     }
 
     shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
@@ -86,6 +90,7 @@ final class MediaPauseService: @unchecked Sendable {
     )
     didPauseWithMediaKey = usedKey
     appsToResume = pausedApps
+    return didPausePlayback
   }
 
   private func endSync() {
@@ -344,7 +349,7 @@ private enum MediaKey {
     if Thread.isMainThread {
       post()
     } else {
-      DispatchQueue.main.sync(execute: post)
+      DispatchQueue.main.async(execute: post)
     }
   }
 

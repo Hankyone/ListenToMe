@@ -1,3 +1,7 @@
+## ListenToMe 0.3.69
+
+- After pausing a playing video or song, wait a beat before the microphone so the first word is yours, not the video.
+
 ## ListenToMe 0.3.68
 
 - Continue mid-written sentences without capitalizing safe common words, while preserving names, acronyms, custom vocabulary, and new sentence capitalization.

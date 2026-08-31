@@ -13,6 +13,22 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
+  func testDelaysCaptureOnlyAfterAPause() {
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldDelayCapture(didPausePlayback: true)
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldDelayCapture(didPausePlayback: false)
+    )
+  }
+
+  func testCaptureLeadMatchesReleaseTail() {
+    XCTAssertEqual(
+      NowPlayingPausePolicy.captureLeadAfterPause,
+      DictationGesturePolicy.releaseTail
+    )
+  }
+
   func testMediaKeyOnlyIfRemotePauseDidNotStick() {
     XCTAssertTrue(
       NowPlayingPausePolicy.shouldSendMediaKey(
