@@ -1,8 +1,25 @@
 import Foundation
 
 struct TextInsertionContext: Equatable, Sendable {
-  let characterBeforeSelection: Character?
+  let textBeforeSelection: String
   let characterAfterSelection: Character?
+  let field: FocusedTextFieldDescriptor?
+
+  var characterBeforeSelection: Character? {
+    textBeforeSelection.last
+  }
+
+  init(
+    characterBeforeSelection: Character? = nil,
+    characterAfterSelection: Character? = nil,
+    textBeforeSelection: String? = nil,
+    field: FocusedTextFieldDescriptor? = nil
+  ) {
+    self.textBeforeSelection =
+      textBeforeSelection ?? characterBeforeSelection.map(String.init) ?? ""
+    self.characterAfterSelection = characterAfterSelection
+    self.field = field
+  }
 }
 
 /// Joins a transcript to the text touching the caret without changing the

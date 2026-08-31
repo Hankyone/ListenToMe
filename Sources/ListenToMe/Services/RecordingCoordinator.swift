@@ -27,7 +27,7 @@ final class RecordingCoordinator: ObservableObject {
   private let history: HistoryStore
   private let permissions: PermissionService
   private let audioCapture = AudioCaptureService()
-  private let delivery = TextDeliveryService()
+  private let delivery: TextDeliveryService
   private let mediaPause = MediaPauseService()
   private lazy var liveDraft = LiveTranscriptDraft { [weak self] snapshot in
     self?.applyLiveSnapshot(snapshot)
@@ -74,6 +74,7 @@ final class RecordingCoordinator: ObservableObject {
     self.settings = settings
     self.history = history
     self.permissions = permissions
+    delivery = TextDeliveryService(settings: settings)
   }
 
   /// Sleep, dock, and USB replug leave a warm graph pointing at a dead HAL

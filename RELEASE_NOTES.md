@@ -1,3 +1,9 @@
+## ListenToMe 0.3.68
+
+- Continue mid-written sentences without capitalizing safe common words, while preserving names, acronyms, custom vocabulary, and new sentence capitalization.
+- Detect prose, search, naming, and code fields locally so search queries and names do not end with unwanted sentence punctuation.
+- Add remembered per-field formatting overrides under the menu bar's Formatting submenu.
+
 ## ListenToMe 0.3.67
 
 - Add missing spaces where dictated text meets existing text at the caret, while avoiding double spaces and spaces before punctuation.

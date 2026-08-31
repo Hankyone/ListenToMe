@@ -11,6 +11,7 @@ import Foundation
 /// empty field.
 @MainActor
 final class TextDeliveryService {
+  private let settings: SettingsStore
   private let insertionContextReader = FocusedTextInsertionContextReader()
   private let markerType = NSPasteboard.PasteboardType(
     "ca.hankyone.ListenToMe.PasteSession"
@@ -28,6 +29,10 @@ final class TextDeliveryService {
   /// back-to-back dictations so the original clipboard can still come back.
   private var originalClipboard: PasteboardCapture?
   private var restoreTask: Task<Void, Never>?
+
+  init(settings: SettingsStore) {
+    self.settings = settings
+  }
 
   func deliver(
     _ text: String,
@@ -80,9 +85,20 @@ final class TextDeliveryService {
       try? await Task.sleep(nanoseconds: settleNs)
     }
 
-    let deliveryText = insertionContextReader.context(for: target).map {
-      InsertionBoundaryFormatter.formatted(text, for: $0)
-    } ?? text
+    let insertionContext = insertionContextReader.context(for: target)
+    settings.noteFocusedTextField(insertionContext?.field)
+    let deliveryText =
+      insertionContext.map { context in
+        let mode =
+          context.field.map(settings.resolvedFieldFormattingMode(for:))
+          ?? .prose
+        return FieldAwareTextFormatter.formatted(
+          text,
+          for: context,
+          mode: mode,
+          protectedTerms: settings.vocabulary.map(\.term)
+        )
+      } ?? text
 
     let marker = UUID().uuidString
     guard preparePasteboard(text: deliveryText, marker: marker) else {
@@ -220,7 +236,7 @@ final class TextDeliveryService {
     return true
   }
 
-  /// AX insert with read-back verification. Unverified success is ignored  - 
+  /// AX insert with read-back verification. Unverified success is ignored  -
   /// that was the Electron false-positive that marked takes as Pasted.
   private func insertTextViaAccessibilityVerified(_ text: String) -> Bool {
     guard PermissionService.isAccessibilityTrusted() else { return false }

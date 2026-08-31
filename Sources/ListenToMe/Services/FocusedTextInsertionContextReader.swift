@@ -1,9 +1,11 @@
 import ApplicationServices
 import Foundation
 
-/// Reads only the characters touching the current selection. Unsupported and
-/// secure fields return no context, leaving delivery behavior unchanged.
+/// Reads a short local fragment around the selection plus accessibility labels
+/// used to classify the field. Unsupported and secure fields return no context.
 struct FocusedTextInsertionContextReader {
+  private let maximumContextLength = 160
+
   func context(for target: TargetApplication) -> TextInsertionContext? {
     let systemWide = AXUIElementCreateSystemWide()
     var focusedObject: CFTypeRef?
@@ -36,25 +38,42 @@ struct FocusedTextInsertionContextReader {
       return nil
     }
 
-    let before: Character?
-    if selection.location > 0 {
-      before = character(
-        in: CFRange(location: selection.location - 1, length: 1),
+    let beforeLength = min(selection.location, maximumContextLength)
+    let before =
+      string(
+        in: CFRange(
+          location: selection.location - beforeLength,
+          length: beforeLength
+        ),
         from: focused
-      )
-    } else {
-      before = nil
-    }
+      ) ?? ""
 
     let afterLocation = selection.location + selection.length
-    let after = character(
+    let after = string(
       in: CFRange(location: afterLocation, length: 1),
       from: focused
+    )?.first
+
+    let field = FocusedTextFieldDescriptor(
+      applicationName: target.name,
+      bundleIdentifier: target.bundleIdentifier,
+      role: stringAttribute(kAXRoleAttribute, from: focused),
+      subrole: stringAttribute(kAXSubroleAttribute, from: focused),
+      identifier: stringAttribute(kAXIdentifierAttribute, from: focused)
+        ?? stringAttribute("AXDOMIdentifier", from: focused),
+      title: stringAttribute(kAXTitleAttribute, from: focused),
+      accessibilityDescription: stringAttribute(
+        kAXDescriptionAttribute,
+        from: focused
+      ),
+      help: stringAttribute(kAXHelpAttribute, from: focused),
+      placeholder: stringAttribute("AXPlaceholderValue", from: focused)
     )
 
     return TextInsertionContext(
-      characterBeforeSelection: before,
-      characterAfterSelection: after
+      characterAfterSelection: after,
+      textBeforeSelection: before,
+      field: field
     )
   }
 
@@ -85,11 +104,11 @@ struct FocusedTextInsertionContextReader {
     return range
   }
 
-  private func character(
+  private func string(
     in range: CFRange,
     from element: AXUIElement
-  ) -> Character? {
-    guard range.location >= 0, range.length > 0 else { return nil }
+  ) -> String? {
+    guard range.location >= 0, range.length > 0 else { return "" }
 
     var mutableRange = range
     if let rangeValue = AXValueCreate(.cfRange, &mutableRange) {
@@ -102,7 +121,7 @@ struct FocusedTextInsertionContextReader {
       ) == .success,
         let value = stringObject as? String
       {
-        return value.first
+        return value
       }
     }
 
@@ -116,7 +135,7 @@ struct FocusedTextInsertionContextReader {
       location: range.location,
       length: min(range.length, text.length - range.location)
     )
-    return text.substring(with: safeRange).first
+    return text.substring(with: safeRange)
   }
 
   private func stringAttribute(

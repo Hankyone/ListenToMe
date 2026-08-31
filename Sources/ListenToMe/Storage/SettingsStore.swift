@@ -73,6 +73,14 @@ final class SettingsStore: ObservableObject {
     didSet { persistVocabulary() }
   }
 
+  @Published private(set) var fieldFormattingOverrides: [String: FieldFormattingMode] {
+    didSet { persistFieldFormattingOverrides() }
+  }
+
+  /// Most recently verified focused field. This contains accessibility labels,
+  /// never the field's text, and is not persisted.
+  @Published private(set) var focusedTextField: FocusedTextFieldDescriptor?
+
   @Published private(set) var hasOpenAIAPIKey: Bool = false
   @Published private(set) var hasGeminiAPIKey: Bool = false
 
@@ -91,6 +99,7 @@ final class SettingsStore: ObservableObject {
     static let delay = "transcription.delay"
     static let languageText = "transcription.languages"
     static let vocabulary = "transcription.vocabulary"
+    static let fieldFormattingOverrides = "delivery.fieldFormattingOverrides"
     static let micProfile = "transcription.micProfile"
     static let microphoneDeviceUID = "audio.microphoneDeviceUID"
     static let microphonePriorityUIDs = "audio.microphonePriorityUIDs"
@@ -178,6 +187,18 @@ final class SettingsStore: ObservableObject {
     } else {
       vocabulary = []
     }
+
+    if let data = defaults.data(forKey: Keys.fieldFormattingOverrides),
+      let overrides = try? JSONDecoder().decode(
+        [String: FieldFormattingMode].self,
+        from: data
+      )
+    {
+      fieldFormattingOverrides = overrides
+    } else {
+      fieldFormattingOverrides = [:]
+    }
+    focusedTextField = nil
 
     // File presence only. Never load either secret at launch.
     hasOpenAIAPIKey = apiKeys.hasStoredKey(for: .openAI)
@@ -365,8 +386,46 @@ final class SettingsStore: ObservableObject {
     vocabulary.removeAll { $0.id == id }
   }
 
+  func noteFocusedTextField(_ descriptor: FocusedTextFieldDescriptor?) {
+    focusedTextField = descriptor
+  }
+
+  func fieldFormattingMode(
+    for descriptor: FocusedTextFieldDescriptor
+  ) -> FieldFormattingMode {
+    fieldFormattingOverrides[descriptor.persistenceKey] ?? .automatic
+  }
+
+  func resolvedFieldFormattingMode(
+    for descriptor: FocusedTextFieldDescriptor
+  ) -> FieldFormattingMode {
+    let selected = fieldFormattingMode(for: descriptor)
+    if selected == .automatic {
+      return FieldFormattingClassifier.automaticMode(for: descriptor)
+    }
+    return selected
+  }
+
+  func setFieldFormattingMode(
+    _ mode: FieldFormattingMode,
+    for descriptor: FocusedTextFieldDescriptor
+  ) {
+    if mode == .automatic {
+      fieldFormattingOverrides.removeValue(forKey: descriptor.persistenceKey)
+    } else {
+      fieldFormattingOverrides[descriptor.persistenceKey] = mode
+    }
+  }
+
   private func persistVocabulary() {
     guard let data = try? JSONEncoder().encode(vocabulary) else { return }
     defaults.set(data, forKey: Keys.vocabulary)
+  }
+
+  private func persistFieldFormattingOverrides() {
+    guard let data = try? JSONEncoder().encode(fieldFormattingOverrides) else {
+      return
+    }
+    defaults.set(data, forKey: Keys.fieldFormattingOverrides)
   }
 }

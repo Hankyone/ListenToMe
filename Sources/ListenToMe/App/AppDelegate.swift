@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var mainWindowController: NSWindowController?
   private var statusItem: NSStatusItem?
   private var statusMenu: NSMenu?
+  private let insertionContextReader = FocusedTextInsertionContextReader()
   private var subscriptions: Set<AnyCancellable> = []
   private var pressStartedRecording = false
   private var pressAt: Date?
@@ -432,6 +433,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     model.settings.showRecordingOverlay.toggle()
   }
 
+  @objc private func setFieldFormattingMode(_ sender: NSMenuItem) {
+    guard let rawValue = sender.representedObject as? String,
+      let mode = FieldFormattingMode(rawValue: rawValue),
+      let field = model.settings.focusedTextField
+    else {
+      return
+    }
+    model.settings.setFieldFormattingMode(mode, for: field)
+  }
+
   @objc private func quit() {
     NSApplication.shared.terminate(nil)
   }
@@ -444,6 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       || event.modifierFlags.contains(.control)
 
     if isRightClick {
+      refreshFocusedTextFieldForMenu()
       historyPanelController?.close()
       showStatusMenu()
     } else {
@@ -608,6 +620,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
     overlayItem.state = model.settings.showRecordingOverlay ? .on : .off
 
+    addFieldFormattingMenu(to: menu)
+
     menu.addItem(.separator())
     addMenuItem(
       "History",
@@ -653,6 +667,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(quit),
       to: menu
     )
+  }
+
+  private func addFieldFormattingMenu(to menu: NSMenu) {
+    let field = model.settings.focusedTextField
+    let selected =
+      field.map(model.settings.fieldFormattingMode(for:))
+      ?? .automatic
+    let rootTitle: String
+    if let field {
+      let effective = model.settings.resolvedFieldFormattingMode(for: field)
+      rootTitle =
+        selected == .automatic
+        ? "Formatting: Auto (\(effective.compactTitle))"
+        : "Formatting: \(selected.compactTitle)"
+    } else {
+      rootTitle = "Field Formatting"
+    }
+    let root = NSMenuItem(
+      title: rootTitle,
+      action: nil,
+      keyEquivalent: ""
+    )
+    root.image = StatusMenuIcon.image(
+      systemName: "textformat",
+      accessibilityDescription: "Field Formatting"
+    )
+
+    let submenu = NSMenu(title: "Field Formatting")
+    let context = submenu.addItem(
+      withTitle: field?.menuContextTitle ?? "No text field detected",
+      action: nil,
+      keyEquivalent: ""
+    )
+    context.isEnabled = false
+    submenu.addItem(.separator())
+
+    for mode in FieldFormattingMode.allCases {
+      let item = submenu.addItem(
+        withTitle: mode.title,
+        action: #selector(setFieldFormattingMode(_:)),
+        keyEquivalent: ""
+      )
+      item.target = self
+      item.representedObject = mode.rawValue
+      item.state = selected == mode ? .on : .off
+      item.isEnabled = field != nil
+    }
+
+    root.submenu = submenu
+    menu.addItem(root)
+  }
+
+  private func refreshFocusedTextFieldForMenu() {
+    guard PermissionService.isAccessibilityTrusted(),
+      let application = NSWorkspace.shared.frontmostApplication,
+      application.bundleIdentifier != Bundle.main.bundleIdentifier
+    else {
+      model.settings.noteFocusedTextField(nil)
+      return
+    }
+
+    let target = TargetApplication(application: application)
+    let context = insertionContextReader.context(for: target)
+    model.settings.noteFocusedTextField(context?.field)
   }
 
   @discardableResult
