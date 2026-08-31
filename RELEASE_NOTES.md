@@ -1,3 +1,7 @@
+## ListenToMe 0.3.70
+
+- Keep a long take listening when the live model sends a finished-text snapshot. Paste only after you stop, so the overlay does not go blank mid-sentence.
+
 ## ListenToMe 0.3.69
 
 - After pausing a playing video or song, wait a beat before the microphone so the first word is yours, not the video.

@@ -907,10 +907,12 @@ final class RecordingCoordinator: ObservableObject {
       guard phase == .recording || phase == .finishing else { return }
       latency?.mark("completed")
       liveDraft.applyCompleted(transcript)
+      if !LiveTakeCompletionPolicy.shouldPasteNow(phase: phase) {
+        liveDraft.beginNewInterimSegment()
+        return
+      }
       if usesBatchTranscription {
-        if phase == .finishing {
-          Task { await self.finishWithBestAvailableTranscript() }
-        }
+        Task { await self.finishWithBestAvailableTranscript() }
         return
       }
       Task {

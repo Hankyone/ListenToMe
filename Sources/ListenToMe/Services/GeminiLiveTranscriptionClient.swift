@@ -338,17 +338,6 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
           resumptionHandle = handle
         }
 
-        let parsed = Self.transcriptionEvents(from: event)
-        for transcriptionEvent in parsed {
-          if case .error(let message) = transcriptionEvent, !sessionReady {
-            resolveReady(
-              with: .failure(ClientError.serverRejected(message))
-            )
-            continue
-          }
-          await emit(transcriptionEvent)
-        }
-
         if event["goAway"] != nil {
           sessionReady = false
           let timeLeft = Self.goAwaySeconds(from: event)
@@ -358,6 +347,17 @@ actor GeminiLiveTranscriptionClient: ReusableTranscriptionClient {
           await emit(.connectionInterrupted)
           scheduleReconnect(reason: "goAway")
           return
+        }
+
+        let parsed = Self.transcriptionEvents(from: event)
+        for transcriptionEvent in parsed {
+          if case .error(let message) = transcriptionEvent, !sessionReady {
+            resolveReady(
+              with: .failure(ClientError.serverRejected(message))
+            )
+            continue
+          }
+          await emit(transcriptionEvent)
         }
       } catch {
         guard !Task.isCancelled, generation == connectionGeneration else { return }
