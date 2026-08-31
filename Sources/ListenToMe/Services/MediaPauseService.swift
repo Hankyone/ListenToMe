@@ -31,13 +31,10 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  /// Mutes, pauses playing media, and reports whether anything was playing
-  /// so the mic can wait a beat before opening.
-  func begin() async -> Bool {
-    await withCheckedContinuation { continuation in
-      queue.async { [weak self] in
-        continuation.resume(returning: self?.beginSync() ?? false)
-      }
+  func begin(onFinished: (() -> Void)? = nil) {
+    queue.async { [weak self] in
+      self?.beginSync()
+      onFinished?()
     }
   }
 
@@ -47,7 +44,7 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  private func beginSync() -> Bool {
+  private func beginSync() {
     endSync()
     generation &+= 1
     let session = generation
@@ -72,7 +69,6 @@ final class MediaPauseService: @unchecked Sendable {
       MediaKey.playPause()
       usedKey = true
     }
-    let didPausePlayback = wasPlaying || usedKey || !pausedApps.isEmpty
 
     guard session == generation else {
       if NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: wasPlaying) {
@@ -82,7 +78,7 @@ final class MediaPauseService: @unchecked Sendable {
         resumeMediaApp(app)
       }
       restoreOutput()
-      return false
+      return
     }
 
     shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
@@ -90,7 +86,6 @@ final class MediaPauseService: @unchecked Sendable {
     )
     didPauseWithMediaKey = usedKey
     appsToResume = pausedApps
-    return didPausePlayback
   }
 
   private func endSync() {
@@ -108,15 +103,15 @@ final class MediaPauseService: @unchecked Sendable {
   }
 
   private func muteOutput() {
-    let osMuted = readOutputMuted()
     let caMuted = readCoreAudioOutputMuted()
-    mutedOutputBeforeSession = osMuted ?? caMuted ?? false
     volumeBeforeSession = readVirtualMainVolume()
-
-    setOutputMuted(true)
     mutedViaCoreAudio = setCoreAudioOutputMuted(true)
+    mutedOutputBeforeSession = caMuted ?? readOutputMuted() ?? false
+    if !mutedViaCoreAudio {
+      setOutputMuted(true)
+    }
 
-    let nowMuted = readOutputMuted() == true || readCoreAudioOutputMuted() == true
+    let nowMuted = readCoreAudioOutputMuted() == true || readOutputMuted() == true
     if !nowMuted, let volume = volumeBeforeSession, volume > 0 {
       didDuckVolume = setVirtualMainVolume(0)
     } else {
@@ -427,7 +422,7 @@ private enum MediaRemoteControl {
       box.value = playing
       lock.signal()
     }
-    _ = lock.wait(timeout: .now() + 0.8)
+    _ = lock.wait(timeout: .now() + 0.2)
     return box.value
   }
 

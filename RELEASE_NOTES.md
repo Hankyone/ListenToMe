@@ -1,3 +1,7 @@
+## ListenToMe 0.3.71
+
+- Start the microphone immediately. Pausing a video no longer delays the start of a take when nothing is playing.
+
 ## ListenToMe 0.3.70
 
 - Keep a long take listening when the live model sends a finished-text snapshot. Paste only after you stop, so the overlay does not go blank mid-sentence.
