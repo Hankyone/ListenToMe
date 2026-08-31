@@ -1,3 +1,7 @@
+## ListenToMe 0.3.67
+
+- Add missing spaces where dictated text meets existing text at the caret, while avoiding double spaces and spaces before punctuation.
+
 ## ListenToMe 0.3.66
 
 - Pause the video or song that is actually playing when you start dictating, including YouTube in a browser, then start it again when you stop. Already-paused media stays paused.

@@ -11,6 +11,7 @@ import Foundation
 /// empty field.
 @MainActor
 final class TextDeliveryService {
+  private let insertionContextReader = FocusedTextInsertionContextReader()
   private let markerType = NSPasteboard.PasteboardType(
     "ca.hankyone.ListenToMe.PasteSession"
   )
@@ -73,19 +74,23 @@ final class TextDeliveryService {
       return .copiedFocusChanged
     }
 
-    let marker = UUID().uuidString
-    guard preparePasteboard(text: text, marker: marker) else {
-      copy(text)
-      abandonClipboardRestore()
-      return .copiedPasteFailed
-    }
-    let pasteChangeCount = NSPasteboard.general.changeCount
-
     if !alreadyFront {
       let settleNs: UInt64 =
         isChromiumHost(target) || isTerminalHost(target) ? 120_000_000 : 60_000_000
       try? await Task.sleep(nanoseconds: settleNs)
     }
+
+    let deliveryText = insertionContextReader.context(for: target).map {
+      InsertionBoundaryFormatter.formatted(text, for: $0)
+    } ?? text
+
+    let marker = UUID().uuidString
+    guard preparePasteboard(text: deliveryText, marker: marker) else {
+      copy(deliveryText)
+      abandonClipboardRestore()
+      return .copiedPasteFailed
+    }
+    let pasteChangeCount = NSPasteboard.general.changeCount
 
     // Cmd+V is the real delivery path (VoiceInk CursorPaster). Always attempt
     // it  -  never trust AX selectedText success on Electron first.
@@ -113,7 +118,7 @@ final class TextDeliveryService {
     // Native AX insert only as a last resort, and only when we can verify the
     // value actually contains our text (Electron lies about selectedText).
     if !pasted {
-      pasted = insertTextViaAccessibilityVerified(text)
+      pasted = insertTextViaAccessibilityVerified(deliveryText)
     }
 
     if pasted {
@@ -130,7 +135,7 @@ final class TextDeliveryService {
       return .pasted
     }
 
-    copy(text)
+    copy(deliveryText)
     abandonClipboardRestore()
     return .copiedPasteFailed
   }
