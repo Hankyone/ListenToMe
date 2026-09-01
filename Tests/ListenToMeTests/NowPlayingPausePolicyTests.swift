@@ -4,40 +4,36 @@ import XCTest
 
 final class NowPlayingPausePolicyTests: XCTestCase {
   func testPlayingIsResumed() {
-    XCTAssertTrue(NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: true))
+    XCTAssertTrue(NowPlayingPausePolicy.shouldResumeNowPlaying(.playing))
   }
 
   func testIdleIsNotResumed() {
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldResumeNowPlaying(wasPlaying: false)
-    )
+    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeNowPlaying(.idle))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeNowPlaying(.unknown))
   }
 
-  func testHoldsMicOnlyWhenSomethingWasPlaying() {
-    XCTAssertTrue(
-      NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: true)
-    )
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: false)
-    )
+  func testHoldsMicOnlyWhenPlayingIsConfirmed() {
+    XCTAssertTrue(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.playing))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.idle))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.unknown))
   }
 
   func testMediaKeyOnlyIfRemotePauseDidNotStick() {
     XCTAssertTrue(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        wasPlaying: true,
+        playback: .playing,
         stillPlayingAfterRemotePause: true
       )
     )
     XCTAssertFalse(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        wasPlaying: true,
+        playback: .playing,
         stillPlayingAfterRemotePause: false
       )
     )
     XCTAssertFalse(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        wasPlaying: false,
+        playback: .idle,
         stillPlayingAfterRemotePause: true
       )
     )

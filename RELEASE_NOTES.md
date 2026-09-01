@@ -1,3 +1,7 @@
+## ListenToMe 0.3.73
+
+- Pause playing media again, including YouTube in a browser. The last version skipped pause when the browser did not report Now Playing.
+
 ## ListenToMe 0.3.72
 
 - If a video or song is playing, wait until it is paused before the microphone opens. If nothing is playing, start listening immediately.

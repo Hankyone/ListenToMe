@@ -54,29 +54,32 @@ final class MediaPauseService: @unchecked Sendable {
     let session = generation
 
     muteFast()
-    let wasPlaying = MediaRemoteControl.isPlaying()
-    if !NowPlayingPausePolicy.shouldHoldMicUntilPaused(wasPlaying: wasPlaying) {
+    let playback = MediaRemoteControl.playback()
+    MediaRemoteControl.pause()
+
+    if !NowPlayingPausePolicy.shouldHoldMicUntilPaused(playback) {
       shouldResumeNowPlaying = false
       didPauseWithMediaKey = false
       appsToResume = []
       queue.async { [weak self] in
         guard let self, self.generation == session else { return }
+        self.setOutputMuted(true)
         self.appsToResume = self.pausePlayingMediaApps()
       }
       return false
     }
 
-    MediaRemoteControl.pause()
     Thread.sleep(forTimeInterval: 0.05)
     var usedKey = false
     if NowPlayingPausePolicy.shouldSendMediaKey(
-      wasPlaying: true,
-      stillPlayingAfterRemotePause: MediaRemoteControl.isPlaying()
+      playback: playback,
+      stillPlayingAfterRemotePause: MediaRemoteControl.playback() == .playing
     ) {
       MediaKey.playPause()
       usedKey = true
     }
     waitUntilPaused()
+    setOutputMuted(true)
     let pausedApps = pausePlayingMediaApps()
 
     guard session == generation else {
@@ -88,16 +91,18 @@ final class MediaPauseService: @unchecked Sendable {
       return false
     }
 
-    shouldResumeNowPlaying = true
+    shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
+      playback
+    )
     didPauseWithMediaKey = usedKey
     appsToResume = pausedApps
     return true
   }
 
   private func waitUntilPaused() {
-    let deadline = Date().addingTimeInterval(0.25)
+    let deadline = Date().addingTimeInterval(0.3)
     while Date() < deadline {
-      if !MediaRemoteControl.isPlaying() { return }
+      if MediaRemoteControl.playback() != .playing { return }
       Thread.sleep(forTimeInterval: 0.04)
     }
   }
@@ -122,9 +127,7 @@ final class MediaPauseService: @unchecked Sendable {
     volumeBeforeSession = readVirtualMainVolume()
     mutedViaCoreAudio = setCoreAudioOutputMuted(true)
     mutedOutputBeforeSession = caMuted ?? false
-    if mutedViaCoreAudio {
-      didDuckVolume = false
-    } else if let volume = volumeBeforeSession, volume > 0 {
+    if let volume = volumeBeforeSession, volume > 0 {
       didDuckVolume = setVirtualMainVolume(0)
     } else {
       didDuckVolume = false
@@ -349,15 +352,8 @@ private enum MediaKey {
   private static let playPauseKey: UInt32 = 16
 
   static func playPause() {
-    let post = {
-      send(down: true)
-      send(down: false)
-    }
-    if Thread.isMainThread {
-      post()
-    } else {
-      DispatchQueue.main.async(execute: post)
-    }
+    send(down: true)
+    send(down: false)
   }
 
   private static func send(down: Bool) {
@@ -389,6 +385,9 @@ private enum MediaRemoteControl {
   private typealias SendCommand = @convention(c) (Int32, CFDictionary?) -> Void
   private typealias Register = @convention(c) (DispatchQueue) -> Void
 
+  private static let callbackQueue = DispatchQueue(
+    label: "ca.hankyone.ListenToMe.mediaRemote.callback"
+  )
   private static let handle: UnsafeMutableRawPointer? = dlopen(
     frameworkPath,
     RTLD_NOW
@@ -416,7 +415,7 @@ private enum MediaRemoteControl {
     ) else {
       return false
     }
-    unsafeBitCast(symbol, to: Register.self)(DispatchQueue.main)
+    unsafeBitCast(symbol, to: Register.self)(callbackQueue)
     return true
   }()
 
@@ -425,16 +424,18 @@ private enum MediaRemoteControl {
     _ = didRegister
   }
 
-  static func isPlaying() -> Bool {
+  static func playback() -> NowPlayingPausePolicy.Playback {
     _ = didRegister
-    guard let isPlayingFn else { return false }
+    guard let isPlayingFn else { return .unknown }
     let box = Box()
     let lock = DispatchSemaphore(value: 0)
-    isPlayingFn(DispatchQueue.main) { playing in
-      box.value = playing
+    isPlayingFn(callbackQueue) { playing in
+      box.value = playing ? .playing : .idle
       lock.signal()
     }
-    _ = lock.wait(timeout: .now() + 0.2)
+    if lock.wait(timeout: .now() + 0.4) == .timedOut {
+      return .unknown
+    }
     return box.value
   }
 
@@ -443,6 +444,6 @@ private enum MediaRemoteControl {
   }
 
   private final class Box: @unchecked Sendable {
-    var value = false
+    var value = NowPlayingPausePolicy.Playback.unknown
   }
 }

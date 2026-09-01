@@ -5,20 +5,26 @@ import Foundation
 /// play/pause key. That key toggles, so it must not fire when nothing was
 /// playing or a paused tab starts on key-up.
 enum NowPlayingPausePolicy {
-  static func shouldResumeNowPlaying(wasPlaying: Bool) -> Bool {
-    wasPlaying
+  enum Playback: Equatable {
+    case playing
+    case idle
+    case unknown
   }
 
-  /// Hold the mic only when Now Playing was actually playing. Idle takes
-  /// must not wait on pause.
-  static func shouldHoldMicUntilPaused(wasPlaying: Bool) -> Bool {
-    wasPlaying
+  static func shouldResumeNowPlaying(_ playback: Playback) -> Bool {
+    playback == .playing
+  }
+
+  /// Hold the mic only when playback is confirmed. Idle and unknown must
+  /// not delay the take.
+  static func shouldHoldMicUntilPaused(_ playback: Playback) -> Bool {
+    playback == .playing
   }
 
   static func shouldSendMediaKey(
-    wasPlaying: Bool,
+    playback: Playback,
     stillPlayingAfterRemotePause: Bool
   ) -> Bool {
-    wasPlaying && stillPlayingAfterRemotePause
+    playback == .playing && stillPlayingAfterRemotePause
   }
 }
