@@ -1,3 +1,7 @@
+## ListenToMe 0.3.74
+
+- Resume your music or video when you stop dictating. On the first take after launch it could stay paused forever.
+
 ## ListenToMe 0.3.73
 
 - Pause playing media again, including YouTube in a browser. The last version skipped pause when the browser did not report Now Playing.

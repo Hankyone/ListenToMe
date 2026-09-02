@@ -28,6 +28,9 @@ final class MediaPauseService: @unchecked Sendable {
   init() {
     queue.async {
       MediaRemoteControl.prepare()
+      // Warm the framework so the first take's playback read does not
+      // time out and report `.unknown` while media is playing.
+      _ = MediaRemoteControl.playback()
     }
   }
 
@@ -55,7 +58,6 @@ final class MediaPauseService: @unchecked Sendable {
 
     muteFast()
     let playback = MediaRemoteControl.playback()
-    MediaRemoteControl.pause()
 
     if !NowPlayingPausePolicy.shouldHoldMicUntilPaused(playback) {
       shouldResumeNowPlaying = false
@@ -63,12 +65,12 @@ final class MediaPauseService: @unchecked Sendable {
       appsToResume = []
       queue.async { [weak self] in
         guard let self, self.generation == session else { return }
-        self.setOutputMuted(true)
-        self.appsToResume = self.pausePlayingMediaApps()
+        self.pauseUnreportedPlayback(playback: playback, session: session)
       }
       return false
     }
 
+    MediaRemoteControl.pause()
     Thread.sleep(forTimeInterval: 0.05)
     var usedKey = false
     if NowPlayingPausePolicy.shouldSendMediaKey(
@@ -97,6 +99,43 @@ final class MediaPauseService: @unchecked Sendable {
     didPauseWithMediaKey = usedKey
     appsToResume = pausedApps
     return true
+  }
+
+  /// Runs after the mic is already open, when the first Now Playing read
+  /// found nothing confirmed playing. Pauses whatever that read missed and
+  /// records everything paused so `end()` can resume it.
+  ///
+  /// AppleScript runs before any MediaRemote pause. A MediaRemote pause
+  /// flips Spotify or Music to "paused" before the player-state check, so
+  /// the app would never be tracked and never resumed. A cold MediaRemote
+  /// read can also time out as `.unknown` on the first take after launch,
+  /// so an unknown read gets one warm re-check with full resume tracking.
+  private func pauseUnreportedPlayback(
+    playback: NowPlayingPausePolicy.Playback,
+    session: UInt64
+  ) {
+    setOutputMuted(true)
+    appsToResume = pausePlayingMediaApps()
+    guard generation == session,
+      playback == .unknown,
+      MediaRemoteControl.playback() == .playing
+    else { return }
+
+    MediaRemoteControl.pause()
+    Thread.sleep(forTimeInterval: 0.05)
+    var usedKey = false
+    if MediaRemoteControl.playback() == .playing {
+      MediaKey.playPause()
+      usedKey = true
+    }
+    waitUntilPaused()
+    guard generation == session else {
+      // The take ended mid-pause: the key toggles, so one press undoes it.
+      MediaKey.playPause()
+      return
+    }
+    shouldResumeNowPlaying = true
+    didPauseWithMediaKey = usedKey
   }
 
   private func waitUntilPaused() {
