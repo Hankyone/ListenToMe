@@ -15,6 +15,13 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
+  func testRecordingWatchdogIsBoundedAtTenMinutes() {
+    XCTAssertEqual(
+      DictationGesturePolicy.recordingWatchdogSeconds,
+      600
+    )
+  }
+
   func testBrowserAudioUsesOnePairedMediaKeyRoute() {
     let plan = NowPlayingPausePolicy.plan(
       audibleBundles: ["com.google.Chrome"],

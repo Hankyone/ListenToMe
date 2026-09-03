@@ -63,6 +63,7 @@ final class RecordingCoordinator: ObservableObject {
   private var sessionTakeID = 0
   /// Take that owns the current media pause transaction.
   private var mediaPauseTakeID: Int?
+  private var recordingWatchdogTask: Task<Void, Never>?
   private var latency: TakeLatencyTrace?
   /// Created on key-down so overlay marks belong to the next take, not a
   /// finishing take we are about to hand off.
@@ -127,6 +128,7 @@ final class RecordingCoordinator: ObservableObject {
 
     takeID += 1
     let id = takeID
+    armRecordingWatchdog(takeID: id)
     latency = nextTakeTrace ?? TakeLatencyTrace()
     nextTakeTrace = nil
     latency?.mark("start")
@@ -316,6 +318,24 @@ final class RecordingCoordinator: ObservableObject {
       return
     }
     await requestStop()
+  }
+
+  /// A take whose end never arrived  -  a missed key-up, a wedged finish  -
+  /// must not hold the app and the hotkey hostage. If the same take is
+  /// still busy after `recordingWatchdogSeconds`, force it back to idle.
+  private func armRecordingWatchdog(takeID id: Int) {
+    recordingWatchdogTask?.cancel()
+    recordingWatchdogTask = Task { [weak self] in
+      try? await Task.sleep(
+        nanoseconds: UInt64(
+          DictationGesturePolicy.recordingWatchdogSeconds * 1_000_000_000
+        )
+      )
+      guard !Task.isCancelled else { return }
+      guard let self, self.takeID == id, self.phase.isBusy else { return }
+      self.latency?.note("watchdog", "forced_idle")
+      await self.recoverToIdle()
+    }
   }
 
   /// Stop that is safe to call from the hotkey even while `start()` is still

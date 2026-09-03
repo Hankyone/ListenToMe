@@ -51,6 +51,9 @@ enum DictationGesturePolicy {
   /// After key-up, keep the mic open so the last syllable and a bit of
   /// trailing silence still reach the transcriber.
   static let releaseTail: TimeInterval = 0.40
+  /// A take that never ends  -  a missed key-up, a wedged finish  -  must
+  /// not hold the app and the hotkey hostage. This long, force it idle.
+  static let recordingWatchdogSeconds: TimeInterval = 600
   static var releaseTailNanoseconds: UInt64 {
     UInt64(releaseTail * 1_000_000_000)
   }

@@ -1,3 +1,8 @@
+## ListenToMe 0.3.78
+
+- The push-to-talk key can no longer go dead. If the app ever loses the key-up event, the next press is treated as a fresh press instead of being swallowed as a key repeat, so a stuck take can always be ended.
+- A take that somehow never ends now force-recovers after ten minutes instead of holding the app and the hotkey hostage.
+
 ## ListenToMe 0.3.77
 
 - The mic opens the moment you push to talk. A video pause costs a fixed 200 ms, never the multi-second wait for the sound to drain.

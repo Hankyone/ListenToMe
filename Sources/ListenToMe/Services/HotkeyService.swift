@@ -151,6 +151,7 @@ final class HotkeyService {
   private var handlerRef: EventHandlerRef?
   private var comboRef: EventHotKeyRef?
   private var comboIsDown = false
+  private var lastPressedAt = Date.distantPast
 
   private var spec: HotkeySpec?
   private var globalMonitors: [Any] = []
@@ -248,14 +249,21 @@ final class HotkeyService {
           // Key-repeat fires another "pressed" after ~0.5s while the key is
           // still down  -  that must not stop a live take. Only treat it as a
           // new press when the physical key is already up (missed key-up).
-          if isPrimaryKeyHeld() {
+          // Repeats are periodic, so a pressed event this long after the
+          // last one is a fresh press whose key-up was lost, no matter what
+          // the HID state claims  -  eating it would leave the hotkey dead.
+          let isPeriodicRepeat =
+            Date().timeIntervalSince(lastPressedAt) < 2.0
+          if isPeriodicRepeat, isPrimaryKeyHeld() {
             return
           }
           pressWasHoldConfirm = false
+          lastPressedAt = Date()
           onPress?()
           return
         }
         comboIsDown = true
+        lastPressedAt = Date()
         pressWasHoldConfirm = false
         onPress?()
       } else if kind == UInt32(kEventHotKeyReleased) {
