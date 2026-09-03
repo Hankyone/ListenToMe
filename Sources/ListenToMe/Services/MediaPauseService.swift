@@ -135,11 +135,15 @@ final class MediaPauseService: @unchecked Sendable {
     guard targetApplicationIsStillRunning(session.plan.targetBundles) else {
       return
     }
-    let currentPlaying = MediaRemoteAdapterClient.currentSession()?.isPlaying
+    let nowPlaying = MediaRemoteAdapterClient.currentSession()
     guard
       NowPlayingPausePolicy.shouldResumePausedTake(
         didPause: session.didPause,
-        currentPlaying: currentPlaying
+        currentPlaying: nowPlaying?.isPlaying
+      ),
+      NowPlayingPausePolicy.currentSessionMatchesTargets(
+        currentBundle: nowPlaying?.bundleIdentifier,
+        targetBundles: session.plan.targetBundles
       )
     else { return }
     playPlayback()

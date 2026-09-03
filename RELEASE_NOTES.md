@@ -1,3 +1,8 @@
+## ListenToMe 0.3.84
+
+- Resume now checks that Now Playing still belongs to the app the take paused. If you played and paused something else mid-take, letting go no longer starts that other app.
+- Media pause can now be turned off in Settings with the new "Pause media while listening" switch. It stays on by default.
+
 ## ListenToMe 0.3.83
 
 - Fixes the 0.3.82 release packaging: the bundled playback helper is now signed with the release identity so Apple notarization accepts it. No behavior change.

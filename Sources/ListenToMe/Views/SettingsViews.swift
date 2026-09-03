@@ -184,6 +184,12 @@ struct SettingsContentView: View {
             isOn: $settings.playDictationSounds
           )
           .toggleStyle(.checkbox)
+
+          Toggle(
+            "Pause media while listening",
+            isOn: $settings.pauseMediaWhileListening
+          )
+          .toggleStyle(.checkbox)
         }
       }
     }

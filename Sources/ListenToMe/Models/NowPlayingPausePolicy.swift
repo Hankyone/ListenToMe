@@ -104,6 +104,18 @@ enum NowPlayingPausePolicy {
     return currentPlaying != true
   }
 
+  /// Same-app veto for resume: when Now Playing now belongs to an app this
+  /// take did not pause, playing would start that other app. A missing
+  /// bundle id (session-less players) cannot prove a mismatch, so the take's
+  /// own knowledge that it paused still governs.
+  static func currentSessionMatchesTargets(
+    currentBundle: String?,
+    targetBundles: Set<String>
+  ) -> Bool {
+    guard let currentBundle else { return true }
+    return targetBundles.contains { representsSameApplication($0, currentBundle) }
+  }
+
   static func isDefinitelyCallAudio(audibleBundles: Set<String>) -> Bool {
     !audibleBundles.isEmpty
       && audibleBundles.allSatisfy(isKnownCallBundle)

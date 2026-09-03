@@ -21,6 +21,11 @@ final class SettingsStore: ObservableObject {
     didSet { defaults.set(playDictationSounds, forKey: Keys.playDictationSounds) }
   }
 
+  /// Pause playing media while a take holds the microphone, resuming after.
+  @Published var pauseMediaWhileListening: Bool {
+    didSet { defaults.set(pauseMediaWhileListening, forKey: Keys.pauseMediaWhileListening) }
+  }
+
   /// Tap the shortcut → keep listening until you tap it again.
   @Published var tapStartsHandsFree: Bool {
     didSet { defaults.set(tapStartsHandsFree, forKey: Keys.tapStartsHandsFree) }
@@ -92,6 +97,7 @@ final class SettingsStore: ObservableObject {
     static let showRecordingOverlay = "appearance.showRecordingOverlay"
     static let overlayLayout = "appearance.overlayLayout"
     static let playDictationSounds = "appearance.playDictationSounds"
+    static let pauseMediaWhileListening = "media.pauseWhileListening"
     static let tapStartsHandsFree = "hotkey.tapStartsHandsFree"
     static let holdIsPushToTalk = "hotkey.holdIsPushToTalk"
     static let spaceLocksHandsFree = "hotkey.spaceLocksHandsFree"
@@ -125,6 +131,9 @@ final class SettingsStore: ObservableObject {
       ) ?? .compact
     playDictationSounds =
       defaults.object(forKey: Keys.playDictationSounds) as? Bool
+      ?? true
+    pauseMediaWhileListening =
+      defaults.object(forKey: Keys.pauseMediaWhileListening) as? Bool
       ?? true
     tapStartsHandsFree =
       defaults.object(forKey: Keys.tapStartsHandsFree) as? Bool

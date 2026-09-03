@@ -184,6 +184,43 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
+  func testResumeStandsDownWhenNowPlayingMovedToAnotherApp() {
+    let pausedTargets: Set<String> = ["com.spotify.client"]
+
+    // Same app still owns the session: resume is allowed.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.currentSessionMatchesTargets(
+        currentBundle: "com.spotify.client",
+        targetBundles: pausedTargets
+      )
+    )
+
+    // A browser helper resolves to the same app family: still a match.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.currentSessionMatchesTargets(
+        currentBundle: "com.google.Chrome.helper",
+        targetBundles: ["com.google.Chrome"]
+      )
+    )
+
+    // Session moved to another app mid-take: playing would start that app.
+    XCTAssertFalse(
+      NowPlayingPausePolicy.currentSessionMatchesTargets(
+        currentBundle: "com.google.Chrome",
+        targetBundles: pausedTargets
+      )
+    )
+
+    // No bundle id (session-less player): cannot prove a mismatch, so the
+    // take's own knowledge that it paused still governs.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.currentSessionMatchesTargets(
+        currentBundle: nil,
+        targetBundles: pausedTargets
+      )
+    )
+  }
+
   func testAdapterGetOutputParsing() {
     let playing = """
       {"playing":true,"bundleIdentifier":"com.google.Chrome","playbackRate":1}

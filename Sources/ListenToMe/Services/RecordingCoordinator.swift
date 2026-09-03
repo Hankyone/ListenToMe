@@ -155,7 +155,7 @@ final class RecordingCoordinator: ObservableObject {
     startElapsedTimer()
     let trace = latency
     mediaPauseTakeID = id
-    async let pausedPlayingMedia = mediaPause.arm(sessionID: id)
+    async let pausedPlayingMedia = armMediaPause(sessionID: id)
     await Task.yield()
     guard id == takeID else {
       await abortIncompleteStart(expectedTakeID: id)
@@ -1597,6 +1597,13 @@ final class RecordingCoordinator: ObservableObject {
 
   private var nonzeroSessionTakeID: Int? {
     sessionTakeID == 0 ? nil : sessionTakeID
+  }
+
+  /// Arms the media pause only when the user setting allows it. When off,
+  /// playback is never touched and takes start without the capture lead.
+  private func armMediaPause(sessionID: Int) async -> Bool {
+    guard settings.pauseMediaWhileListening else { return false }
+    return await mediaPause.arm(sessionID: sessionID)
   }
 
   private func endMediaPause(for takeID: Int) {
