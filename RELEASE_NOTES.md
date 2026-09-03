@@ -1,3 +1,8 @@
+## ListenToMe 0.3.81
+
+- Push-to-talk never starts paused media. The blind play/pause key is gone. Pause uses only the explicit pause command, which is a no-op on already-paused players, so a paused Twitter video stays dead when you press to talk.
+- Chrome playing video pauses again. Pause no longer needs a readable Now Playing session, so YouTube pauses even when macOS redacts the rate. Resume still needs confirmation it is paused, so session-less media stays paused for you to resume by hand instead of risking a surprise start.
+
 ## ListenToMe 0.3.80
 
 - A paused video that does not register a Now Playing session (like Twitter in a browser) is no longer toggled back on when you press push-to-talk. When the app cannot confirm media is playing, it now leaves the key alone instead of toggling blindly.

@@ -6,13 +6,11 @@ import Foundation
 /// Pauses the media that was active when a take began, then resumes it when
 /// that exact take releases the microphone.
 ///
-/// Detection uses Core Audio process activity to spot audible apps cheaply,
-/// then the Now Playing playback rate as ground truth before the hardware
-/// play/pause key goes out: the key is a toggle, and the stream signal lags
-/// a real pause by a second or two, so only the rate can tell a playing
-/// video from a just-paused one. Control uses one mechanism per take: a
-/// paired hardware play/pause key for known media apps, or paired
-/// MediaRemote pause/play commands for other players. There is no global
+/// Detection uses Core Audio process activity to spot audible apps. Control
+/// uses only explicit MediaRemote pause/play commands, never the hardware
+/// play/pause key: the key toggles blindly and started paused videos on
+/// press. Pause is sent whenever non-call audio is audible; resume is sent
+/// only when Now Playing confirms media is still paused. There is no global
 /// output mute, no AppleScript, and no wait-for-silence loop.
 final class MediaPauseService: @unchecked Sendable {
   private struct ActiveSession {
@@ -91,22 +89,13 @@ final class MediaPauseService: @unchecked Sendable {
       return true
     }
 
-    switch plan.route {
-    case .mediaKey:
-      // The key toggles, so it goes out only when the Now Playing session
-      // confirms media is actually playing. The stream signal above lags a
-      // pause by a second or two while the player drains; the rate does
-      // not. Without this check, a take over a just-paused video would
-      // toggle it straight back on.
-      let rate = PlaybackRateProbe.currentRate()
-      guard NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: rate)
-      else {
-        return false
-      }
-      _ = MediaKey.playPause()
-    case .mediaRemote:
-      guard MediaRemoteControl.pause() else { return false }
-    }
+    // Explicit pause is safe even when the state is uncertain: pausing an
+    // already-paused player is a no-op, never a toggle-on. The Now Playing
+    // rate is not consulted here because reads are redacted on recent macOS
+    // and session-less players (Twitter in a browser) report nil even while
+    // playing. If the player has a session, this pauses it. If it has none,
+    // this does nothing, which is still safe.
+    guard MediaRemoteControl.pause() else { return false }
     activeSession = ActiveSession(id: sessionID, plan: plan)
 
     Thread.sleep(
@@ -123,18 +112,15 @@ final class MediaPauseService: @unchecked Sendable {
 
   private func resume(_ plan: MediaPausePlan) {
     guard targetApplicationIsStillRunning(plan.targetBundles) else { return }
-    switch plan.route {
-    case .mediaKey:
-      // Resume only when media is still paused. Playing again means our
-      // pause never landed or the user restarted playback; either way a
-      // toggle would pause it.
-      let rate = PlaybackRateProbe.currentRate()
-      guard NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: rate)
-      else { return }
-      MediaKey.playPause()
-    case .mediaRemote:
-      _ = MediaRemoteControl.play()
-    }
+    // Resume only when Now Playing confirms media is still paused. Playing
+    // again means our pause never landed or the user restarted playback;
+    // nil means no readable session, so resuming might start something the
+    // user never had playing. When in doubt, leave it paused for the user
+    // to resume by hand.
+    let rate = PlaybackRateProbe.currentRate()
+    guard NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: rate)
+    else { return }
+    _ = MediaRemoteControl.play()
   }
 
   private func targetApplicationIsStillRunning(
@@ -274,40 +260,6 @@ final class MediaPauseService: @unchecked Sendable {
       return nil
     }
     return info.kp_eproc.e_ppid
-  }
-}
-
-/// Hardware play/pause key. This is a blind toggle, so it is used only as the
-/// paired start/end command for one recorded media session.
-private enum MediaKey {
-  private static let playPauseKey: UInt32 = 16
-
-  @discardableResult
-  static func playPause() -> Bool {
-    guard let down = event(down: true)?.cgEvent,
-      let up = event(down: false)?.cgEvent
-    else {
-      return false
-    }
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
-    return true
-  }
-
-  private static func event(down: Bool) -> NSEvent? {
-    let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
-    let data1 = Int((playPauseKey << 16) | ((down ? 0xA : 0xB) << 8))
-    return NSEvent.otherEvent(
-      with: .systemDefined,
-      location: .zero,
-      modifierFlags: flags,
-      timestamp: 0,
-      windowNumber: 0,
-      context: nil,
-      subtype: 8,
-      data1: data1,
-      data2: -1
-    )
   }
 }
 

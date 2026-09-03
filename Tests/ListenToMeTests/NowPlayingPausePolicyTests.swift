@@ -22,34 +22,26 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
-  func testBrowserAudioUsesOnePairedMediaKeyRoute() {
+  func testBrowserAudioUsesExplicitMediaRemoteRoute() {
     let plan = NowPlayingPausePolicy.plan(
       audibleBundles: ["com.google.Chrome"],
       inputBundles: []
     )
 
-    XCTAssertEqual(plan?.route, .mediaKey)
+    XCTAssertEqual(plan?.route, .mediaRemote)
     XCTAssertEqual(
       plan?.targetBundles,
       Set(["com.google.Chrome"])
     )
   }
 
-  func testBrowserHelperAudioMayUseMediaKey() {
-    XCTAssertTrue(
-      NowPlayingPausePolicy.shouldSendMediaKey(
-        audibleBundles: ["com.google.Chrome.helper"]
-      )
-    )
-  }
-
-  func testSpotifyUsesThePairedMediaKeyRoute() {
+  func testSpotifyUsesExplicitMediaRemoteRoute() {
     let plan = NowPlayingPausePolicy.plan(
       audibleBundles: ["com.spotify.client"],
       inputBundles: []
     )
 
-    XCTAssertEqual(plan?.route, .mediaKey)
+    XCTAssertEqual(plan?.route, .mediaRemote)
     XCTAssertEqual(
       plan?.targetBundles,
       Set(["com.spotify.client"])
@@ -66,24 +58,6 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     XCTAssertEqual(
       plan?.targetBundles,
       Set(["com.example.player"])
-    )
-  }
-
-  func testCallAudioNeverUsesMediaKey() {
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldSendMediaKey(
-        audibleBundles: ["us.zoom.xos"]
-      )
-    )
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldSendMediaKey(
-        audibleBundles: ["com.apple.FaceTime"]
-      )
-    )
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldSendMediaKey(
-        audibleBundles: ["com.microsoft.teams"]
-      )
     )
   }
 
@@ -111,7 +85,7 @@ final class NowPlayingPausePolicyTests: XCTestCase {
       inputBundles: ["us.zoom.xos"]
     )
 
-    XCTAssertEqual(plan?.route, .mediaKey)
+    XCTAssertEqual(plan?.route, .mediaRemote)
     XCTAssertEqual(
       plan?.targetBundles,
       Set(["com.spotify.client"])
@@ -124,9 +98,6 @@ final class NowPlayingPausePolicyTests: XCTestCase {
         audibleBundles: [],
         inputBundles: []
       )
-    )
-    XCTAssertFalse(
-      NowPlayingPausePolicy.shouldSendMediaKey(audibleBundles: [])
     )
   }
 
@@ -159,31 +130,18 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     )
   }
 
-  func testPauseToggleIsSentOnlyWhenMediaIsActuallyPlaying() {
-    // Playing: the toggle may go out.
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 1.0))
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 0.5))
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 2.0))
+  func testResumeIsSentOnlyWhenMediaIsStillPaused() {
+    // Still paused: resume what this take paused.
+    XCTAssertTrue(NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: 0.0))
 
-    // Definitively paused: the toggle would start the video. Never send it.
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 0.0))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: -0.5))
+    // Playing again - the pause never landed or the user restarted: playing
+    // would pause it.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: 1.0))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: 0.5))
 
-    // No session (some players never register one): treat as not playing,
-    // so a paused video is never toggled back on.
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: nil))
-  }
-
-  func testResumeToggleIsSentOnlyWhenMediaIsStillPaused() {
-    // Still paused: the toggle resumes what this take paused.
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 0.0))
-
-    // Playing again - the pause never landed or the user restarted: a
-    // toggle would pause it.
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 1.0))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 0.5))
-
-    // No session: cannot confirm still paused, so do not toggle.
-    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: nil))
+    // No session: cannot confirm still paused, so do not play. Paused
+    // session-less media stays paused for the user to resume by hand,
+    // which is far better than starting something that was never playing.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: nil))
   }
 }
