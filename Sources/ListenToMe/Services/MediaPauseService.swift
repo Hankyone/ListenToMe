@@ -6,10 +6,14 @@ import Foundation
 /// Pauses the media that was active when a take began, then resumes it when
 /// that exact take releases the microphone.
 ///
-/// Detection uses Core Audio process activity. Control uses one mechanism per
-/// take: a paired hardware play/pause key for known media apps, or paired
-/// MediaRemote pause/play commands for other players. There is no global output
-/// mute, no AppleScript, and no wait-for-silence loop.
+/// Detection uses Core Audio process activity to spot audible apps cheaply,
+/// then the Now Playing playback rate as ground truth before the hardware
+/// play/pause key goes out: the key is a toggle, and the stream signal lags
+/// a real pause by a second or two, so only the rate can tell a playing
+/// video from a just-paused one. Control uses one mechanism per take: a
+/// paired hardware play/pause key for known media apps, or paired
+/// MediaRemote pause/play commands for other players. There is no global
+/// output mute, no AppleScript, and no wait-for-silence loop.
 final class MediaPauseService: @unchecked Sendable {
   private struct ActiveSession {
     let id: Int
@@ -48,13 +52,7 @@ final class MediaPauseService: @unchecked Sendable {
   }
 
   private func armSync(sessionID: Int) -> Bool {
-    if let activeSession {
-      if activeSession.id == sessionID {
-        return true
-      }
-      resume(activeSession.plan)
-      self.activeSession = nil
-    }
+    if let activeSession, activeSession.id == sessionID { return true }
 
     let audibleBundles = activeBundleIDs(
       property: kAudioProcessPropertyIsRunningOutput
@@ -71,7 +69,44 @@ final class MediaPauseService: @unchecked Sendable {
       return false
     }
 
-    guard pause(plan.route) else { return false }
+    // A stale session from an aborted take would toggle its pause back on
+    // here, and the new take would toggle it again. When both takes drive
+    // the same route, the new take simply adopts the existing pause; the
+    // same number of key presses still pair up by take end.
+    var adoptedPlan: MediaPausePlan?
+    if let activeSession {
+      if activeSession.plan.route == plan.route {
+        adoptedPlan = activeSession.plan
+      } else {
+        resume(activeSession.plan)
+      }
+      self.activeSession = nil
+    }
+
+    if let adoptedPlan {
+      activeSession = ActiveSession(id: sessionID, plan: adoptedPlan)
+      Thread.sleep(
+        forTimeInterval: NowPlayingPausePolicy.captureLeadAfterPause
+      )
+      return true
+    }
+
+    switch plan.route {
+    case .mediaKey:
+      // The key toggles, so it goes out only when the Now Playing session
+      // confirms media is actually playing. The stream signal above lags a
+      // pause by a second or two while the player drains; the rate does
+      // not. Without this check, a take over a just-paused video would
+      // toggle it straight back on.
+      let rate = PlaybackRateProbe.currentRate()
+      guard NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: rate)
+      else {
+        return false
+      }
+      _ = MediaKey.playPause()
+    case .mediaRemote:
+      guard MediaRemoteControl.pause() else { return false }
+    }
     activeSession = ActiveSession(id: sessionID, plan: plan)
 
     Thread.sleep(
@@ -86,20 +121,17 @@ final class MediaPauseService: @unchecked Sendable {
     resume(activeSession.plan)
   }
 
-  private func pause(_ route: MediaPauseRoute) -> Bool {
-    switch route {
-    case .mediaKey:
-      return MediaKey.playPause()
-    case .mediaRemote:
-      return MediaRemoteControl.pause()
-    }
-  }
-
   private func resume(_ plan: MediaPausePlan) {
     guard targetApplicationIsStillRunning(plan.targetBundles) else { return }
     switch plan.route {
     case .mediaKey:
-      _ = MediaKey.playPause()
+      // Resume only when media is still paused. Playing again means our
+      // pause never landed or the user restarted playback; either way a
+      // toggle would pause it.
+      let rate = PlaybackRateProbe.currentRate()
+      guard NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: rate)
+      else { return }
+      MediaKey.playPause()
     case .mediaRemote:
       _ = MediaRemoteControl.play()
     }

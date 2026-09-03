@@ -1,3 +1,10 @@
+## ListenToMe 0.3.77
+
+- The mic opens the moment you push to talk. A video pause costs a fixed 200 ms, never the multi-second wait for the sound to drain.
+- An already-paused video is never touched. The play/pause key now goes out only when the Now Playing session confirms media is actually playing, so pressing push-to-talk can never start playback that was not playing.
+- Resume only fires when the video or song is still paused, so a restart you did by hand mid-take is never paused again.
+- Media pause is scoped to each take: stale or duplicate cleanup from an aborted take can no longer toggle playback, and audio from one take can never leak into another.
+
 ## ListenToMe 0.3.76
 
 - Media no longer starts playing again mid-take: a slow-to-pause video could look like a failed pause and get toggled back on. Browsers and web apps now get only the play/pause key, never a double command.

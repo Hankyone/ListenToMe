@@ -83,6 +83,26 @@ enum NowPlayingPausePolicy {
     )
   }
 
+  /// The hardware play/pause key toggles, so it may only go out when the
+  /// Now Playing session says media is actually playing. A definitive rate
+  /// of 0 means the player is paused: the toggle would start it, which is
+  /// exactly what must never happen. nil means the session could not be
+  /// read; fall back to sending so pausing keeps working when the private
+  /// class is unavailable.
+  static func shouldSendPauseToggle(playbackRate: Double?) -> Bool {
+    guard let rate = playbackRate else { return true }
+    return rate > 0.01
+  }
+
+  /// At take end the resume key may go out only when media is still
+  /// paused: that resumes what this take paused. If it is playing again,
+  /// either our pause never landed or the user restarted playback, and a
+  /// toggle would pause it.
+  static func shouldSendResumeToggle(playbackRate: Double?) -> Bool {
+    guard let rate = playbackRate else { return true }
+    return rate <= 0.01
+  }
+
   static func shouldSendMediaKey(audibleBundles: Set<String>) -> Bool {
     audibleBundles.contains(where: isMediaKeyBundle)
   }

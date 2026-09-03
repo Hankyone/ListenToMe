@@ -151,4 +151,31 @@ final class NowPlayingPausePolicyTests: XCTestCase {
       NowPlayingPausePolicy.isDefinitelyCallAudio(audibleBundles: [])
     )
   }
+
+  func testPauseToggleIsSentOnlyWhenMediaIsActuallyPlaying() {
+    // Playing: the toggle may go out.
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 1.0))
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 0.5))
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 2.0))
+
+    // Definitively paused: the toggle would start the video. Never send it.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 0.0))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: -0.5))
+
+    // Unreadable session: fall back to sending so pausing keeps working.
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: nil))
+  }
+
+  func testResumeToggleIsSentOnlyWhenMediaIsStillPaused() {
+    // Still paused: the toggle resumes what this take paused.
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 0.0))
+
+    // Playing again - the pause never landed or the user restarted: a
+    // toggle would pause it.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 1.0))
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 0.5))
+
+    // Unreadable session: fall back to sending so resuming keeps working.
+    XCTAssertTrue(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: nil))
+  }
 }
