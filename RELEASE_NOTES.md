@@ -1,3 +1,8 @@
+## ListenToMe 0.3.79
+
+- Fixed a jam where the app kept recording and the push-to-talk key went dead: when transcription finished text while a take was ending, the microphone engine could be left running forever behind an already-delivered take. The mic is now stopped by whichever path finishes first.
+- Escape now always cancels: it stops a live mic even when a previous end got stuck halfway, instead of only playing the sound.
+
 ## ListenToMe 0.3.78
 
 - The push-to-talk key can no longer go dead. If the app ever loses the key-up event, the next press is treated as a fresh press instead of being swallowed as a key repeat, so a stuck take can always be ended.

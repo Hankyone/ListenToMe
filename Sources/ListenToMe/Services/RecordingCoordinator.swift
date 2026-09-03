@@ -997,7 +997,11 @@ final class RecordingCoordinator: ObservableObject {
     elapsedTask?.cancel()
     elapsedTask = nil
 
-    if phase == .recording {
+    // Stop the capture whenever the mic is actually live, not only when
+    // the phase says .recording: a completed event can arrive while the
+    // release path is mid-flight, and if both sides assume the other will
+    // stop the engine, the mic records forever behind a delivered take.
+    if audioCapture.isRecording {
       if let remainder = await audioCapture.stop() {
         audioContinuation?.yield(remainder)
       }
@@ -1150,12 +1154,23 @@ final class RecordingCoordinator: ObservableObject {
   }
 
   private func cancelPreservingAudio() async {
-    guard phase.isBusy, !didFinalizeCurrentRecording, !isClosingTake else { return }
+    // Esc must always be able to kill a live mic, even when a wedged end
+    // path latched the finalize flags and left the engine orphaned.
+    await stopCapturePreservingFile()
+    guard phase.isBusy else { return }
+    guard !didFinalizeCurrentRecording, !isClosingTake else {
+      // The take was already finalized elsewhere; the capture above is
+      // dead, so just make sure the state and UI end up idle.
+      isClosingTake = false
+      isHandsFreeLocked = false
+      phase = .idle
+      prepareForNextTake()
+      return
+    }
     isClosingTake = true
     stopRequestedWhileStarting = false
     finishTimeoutTask?.cancel()
     finishTimeoutTask = nil
-    await stopCapturePreservingFile()
     await recycleOrDropClient()
 
     let partial = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
