@@ -3,39 +3,50 @@ import XCTest
 @testable import ListenToMe
 
 final class NowPlayingPausePolicyTests: XCTestCase {
-  func testPlayingIsResumed() {
-    XCTAssertTrue(NowPlayingPausePolicy.shouldResumeNowPlaying(.playing))
-  }
-
-  func testIdleIsNotResumed() {
-    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeNowPlaying(.idle))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldResumeNowPlaying(.unknown))
-  }
-
-  func testHoldsMicOnlyWhenPlayingIsConfirmed() {
-    XCTAssertTrue(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.playing))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.idle))
-    XCTAssertFalse(NowPlayingPausePolicy.shouldHoldMicUntilPaused(.unknown))
-  }
-
-  func testMediaKeyOnlyIfRemotePauseDidNotStick() {
+  func testBrowserAudioMayUseMediaKey() {
     XCTAssertTrue(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        playback: .playing,
-        stillPlayingAfterRemotePause: true
+        audibleBundles: ["com.google.Chrome"]
+      )
+    )
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        audibleBundles: ["com.apple.Safari"]
+      )
+    )
+  }
+
+  func testBrowserHelperAudioMayUseMediaKey() {
+    // Chrome audio runs in a helper process; resolved to the parent app
+    // before this check, but a stray helper-style bundle must still match.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        audibleBundles: ["com.google.Chrome.helper"]
+      )
+    )
+  }
+
+  func testCallAudioNeverUsesMediaKey() {
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldSendMediaKey(
+        audibleBundles: ["us.zoom.xos"]
       )
     )
     XCTAssertFalse(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        playback: .playing,
-        stillPlayingAfterRemotePause: false
+        audibleBundles: ["com.apple.FaceTime"]
       )
     )
     XCTAssertFalse(
       NowPlayingPausePolicy.shouldSendMediaKey(
-        playback: .idle,
-        stillPlayingAfterRemotePause: true
+        audibleBundles: ["com.microsoft.teams"]
       )
+    )
+  }
+
+  func testNoAudioNeverUsesMediaKey() {
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldSendMediaKey(audibleBundles: [])
     )
   }
 }

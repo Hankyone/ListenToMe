@@ -4,11 +4,21 @@ import CoreAudio
 import Darwin
 import Foundation
 
-/// Pauses Now Playing, then the hardware play/pause key if a browser ignored
-/// the command, and mutes output so dictation is never talking over a video.
+/// Mutes output instantly so dictation never talks over a video, then
+/// pauses whatever is actually making sound and resumes it on release.
 ///
-/// All AppleScript and MediaRemote waits run on a utility queue  -  never the
-/// main thread. `NSAppleScript.execute` on MainActor froze the overlay.
+/// Now Playing reads have been redacted for third-party apps since
+/// macOS 15.4  -  they report "not playing" while Spotify or YouTube is
+/// audibly playing  -  so detection never reads Now Playing. The ground
+/// truth is Core Audio: which processes are running an output stream.
+/// MediaRemote commands still route fine and pause well-behaved players;
+/// Chromium ignores them and answers only the hardware play/pause key,
+/// which toggles blindly, so it is the second attempt and only for
+/// media-capable apps. `end()` resumes with exactly the mechanism that
+/// paused, and only when nothing has started playing since.
+///
+/// Everything runs on a utility queue  -  never the main thread.
+/// `NSAppleScript.execute` on MainActor froze the overlay.
 final class MediaPauseService: @unchecked Sendable {
   private let queue = DispatchQueue(
     label: "ca.hankyone.ListenToMe.mediaPause",
@@ -22,21 +32,21 @@ final class MediaPauseService: @unchecked Sendable {
   private var shouldResumeNowPlaying = false
   private var didPauseWithMediaKey = false
   private var appsToResume: [String] = []
+  /// Players that refused Apple Events consent; skip them without asking
+  /// again. A first attempt may show a one-time consent prompt.
+  private var scriptableDenied: Set<String> = []
   /// Bumped on each begin/end so a late begin can't clobber a finished take.
   private var generation: UInt64 = 0
 
   init() {
     queue.async {
       MediaRemoteControl.prepare()
-      // Warm the framework so the first take's playback read does not
-      // time out and report `.unknown` while media is playing.
-      _ = MediaRemoteControl.playback()
     }
   }
 
-  /// Mutes output, and if something is playing, pauses it and waits until
-  /// playback has actually stopped. Returns true only in that playing case
-  /// so idle takes can open the mic immediately.
+  /// Mutes output and kicks off pausing in the background. Always returns
+  /// false: output is muted synchronously before the mic opens, so there
+  /// is nothing to wait for. The return value only feeds a latency trace.
   func arm() async -> Bool {
     await withCheckedContinuation { continuation in
       queue.async { [weak self] in
@@ -57,99 +67,206 @@ final class MediaPauseService: @unchecked Sendable {
     let session = generation
 
     muteFast()
-    let playback = MediaRemoteControl.playback()
-
-    if !NowPlayingPausePolicy.shouldHoldMicUntilPaused(playback) {
-      shouldResumeNowPlaying = false
-      didPauseWithMediaKey = false
-      appsToResume = []
-      queue.async { [weak self] in
-        guard let self, self.generation == session else { return }
-        self.pauseUnreportedPlayback(playback: playback, session: session)
-      }
-      return false
+    let audibleBefore = anyProcessPlayingOutput()
+    shouldResumeNowPlaying = false
+    didPauseWithMediaKey = false
+    appsToResume = []
+    queue.async { [weak self] in
+      guard let self, self.generation == session else { return }
+      self.pauseWhateverIsAudible(audibleBefore: audibleBefore)
     }
-
-    MediaRemoteControl.pause()
-    Thread.sleep(forTimeInterval: 0.05)
-    var usedKey = false
-    if NowPlayingPausePolicy.shouldSendMediaKey(
-      playback: playback,
-      stillPlayingAfterRemotePause: MediaRemoteControl.playback() == .playing
-    ) {
-      MediaKey.playPause()
-      usedKey = true
-    }
-    waitUntilPaused()
-    setOutputMuted(true)
-    let pausedApps = pausePlayingMediaApps()
-
-    guard session == generation else {
-      if usedKey { MediaKey.playPause() }
-      for app in pausedApps {
-        resumeMediaApp(app)
-      }
-      restoreOutput()
-      return false
-    }
-
-    shouldResumeNowPlaying = NowPlayingPausePolicy.shouldResumeNowPlaying(
-      playback
-    )
-    didPauseWithMediaKey = usedKey
-    appsToResume = pausedApps
-    return true
+    return false
   }
 
-  /// Runs after the mic is already open, when the first Now Playing read
-  /// found nothing confirmed playing. Pauses whatever that read missed and
-  /// records everything paused so `end()` can resume it.
-  ///
-  /// AppleScript runs before any MediaRemote pause. A MediaRemote pause
-  /// flips Spotify or Music to "paused" before the player-state check, so
-  /// the app would never be tracked and never resumed. A cold MediaRemote
-  /// read can also time out as `.unknown` on the first take after launch,
-  /// so an unknown read gets one warm re-check with full resume tracking.
-  private func pauseUnreportedPlayback(
-    playback: NowPlayingPausePolicy.Playback,
-    session: UInt64
-  ) {
-    setOutputMuted(true)
-    appsToResume = pausePlayingMediaApps()
-    guard generation == session,
-      playback == .unknown,
-      MediaRemoteControl.playback() == .playing
-    else { return }
+  /// Pause whatever is actually making sound, recording exactly what
+  /// worked so `end()` can resume with the matching command.
+  private func pauseWhateverIsAudible(audibleBefore: Bool) {
+    guard audibleBefore else { return }
+    // A notification ping is audible for a moment too; only chase sound
+    // that persists.
+    Thread.sleep(forTimeInterval: 0.12)
+    guard anyProcessPlayingOutput() else { return }
 
-    MediaRemoteControl.pause()
-    Thread.sleep(forTimeInterval: 0.05)
-    var usedKey = false
-    if MediaRemoteControl.playback() == .playing {
-      MediaKey.playPause()
-      usedKey = true
+    setOutputMuted(true)
+
+    // Music and Spotify answer AppleScript, which targets the app exactly
+    //  -  no routing ambiguity no matter who owns the Now Playing session.
+    pauseAudibleScriptableApps()
+    // A just-paused player's stream lingers for a moment; give it time to
+    // drain before concluding anything is still playing.
+    if !appsToResume.isEmpty {
+      waitUntilOutputQuiet()
     }
-    waitUntilPaused()
-    guard generation == session else {
-      // The take ended mid-pause: the key toggles, so one press undoes it.
-      MediaKey.playPause()
+    if !anyProcessPlayingOutput() { return }
+
+    // MediaRemote commands reach whoever owns the Now Playing session.
+    MediaRemoteControl.pause()
+    waitUntilOutputQuiet()
+    if !anyProcessPlayingOutput() {
+      shouldResumeNowPlaying = true
       return
     }
-    shouldResumeNowPlaying = true
-    didPauseWithMediaKey = usedKey
+
+    // MediaRemote was ignored (Chromium does this). The hardware play/pause
+    // key reaches those players, but it toggles blindly, so it is only sent
+    // when the remaining sound comes from a known media-capable app.
+    guard NowPlayingPausePolicy.shouldSendMediaKey(
+      audibleBundles: audibleProcessBundleIDs()
+    ) else { return }
+    MediaKey.playPause()
+    waitUntilOutputQuiet()
+    if !anyProcessPlayingOutput() {
+      didPauseWithMediaKey = true
+    }
   }
 
-  private func waitUntilPaused() {
-    let deadline = Date().addingTimeInterval(0.3)
-    while Date() < deadline {
-      if MediaRemoteControl.playback() != .playing { return }
-      Thread.sleep(forTimeInterval: 0.04)
+  private static let scriptablePlayers: [(name: String, bundleID: String)] = [
+    ("Music", "com.apple.Music"),
+    ("Spotify", "com.spotify.client"),
+  ]
+
+  private func pauseAudibleScriptableApps() {
+    let audible = audibleProcessBundleIDs()
+    for app in Self.scriptablePlayers {
+      guard audible.contains(app.bundleID),
+        !scriptableDenied.contains(app.bundleID)
+      else { continue }
+      // The process is audibly playing, so it has a player to pause.
+      if runOSASCRIPT("tell application \"\(app.name)\" to pause") != nil {
+        appsToResume.append(app.name)
+      } else {
+        scriptableDenied.insert(app.bundleID)
+      }
     }
+  }
+
+  private func resumeMediaApp(_ app: String) {
+    guard let bundleID = Self.scriptablePlayers.first(where: {
+      $0.name == app
+    })?.bundleID,
+      NSWorkspace.shared.runningApplications.contains(where: {
+        $0.bundleIdentifier == bundleID
+      })
+    else { return }
+    _ = runOSASCRIPT("tell application \"\(app)\" to play")
+  }
+
+  /// Waits for output to go quiet. Players keep their stream alive for
+  /// over a second after pausing (Spotify lingers ~1.4s), so the window
+  /// has to be generous. This runs on the pause queue with the mic
+  /// already open  -  the wait costs the user nothing.
+  private func waitUntilOutputQuiet() {
+    let deadline = Date().addingTimeInterval(1.6)
+    while Date() < deadline {
+      if !anyProcessPlayingOutput() { return }
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+  }
+
+  /// Ground truth from Core Audio: is any other process running an output
+  /// stream right now? Now Playing reads lie or time out; this does not.
+  private func anyProcessPlayingOutput() -> Bool {
+    !audibleProcessPIDs().isEmpty
+  }
+
+  /// Bundle IDs of other processes currently running an output stream.
+  /// Browser audio runs in helper processes with no bundle identity, so a
+  /// helper resolves to its parent app (Chrome Helper -> com.google.Chrome).
+  private func audibleProcessBundleIDs() -> Set<String> {
+    var bundles = Set<String>()
+    for pid in audibleProcessPIDs() {
+      if let bundle = bundleID(for: pid) {
+        bundles.insert(bundle)
+      }
+    }
+    return bundles
+  }
+
+  private func bundleID(for pid: pid_t) -> String? {
+    var current = pid
+    for _ in 0..<4 {
+      if let bundle = NSRunningApplication(processIdentifier: current)?
+        .bundleIdentifier
+      {
+        return bundle
+      }
+      var info = kinfo_proc()
+      var size = MemoryLayout<kinfo_proc>.stride
+      var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+      guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+        return nil
+      }
+      let parent = info.kp_eproc.e_ppid
+      guard parent > 1, parent != current else { return nil }
+      current = parent
+    }
+    return nil
+  }
+
+  private func audibleProcessPIDs() -> [pid_t] {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var listAddress = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyProcessObjectList,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(system, &listAddress) else { return [] }
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &listAddress, 0, nil, &size)
+      == noErr
+    else { return [] }
+    var ids = [AudioObjectID](
+      repeating: 0,
+      count: Int(size) / MemoryLayout<AudioObjectID>.size
+    )
+    guard AudioObjectGetPropertyData(system, &listAddress, 0, nil, &size, &ids)
+      == noErr
+    else { return [] }
+
+    let selfPID = ProcessInfo.processInfo.processIdentifier
+    var audible: [pid_t] = []
+    for id in ids where id != 0 {
+      var pidAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyPID,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var pid: pid_t = 0
+      var pidSize = UInt32(MemoryLayout<pid_t>.size)
+      guard AudioObjectGetPropertyData(id, &pidAddress, 0, nil, &pidSize, &pid)
+        == noErr, pid != selfPID
+      else { continue }
+
+      var runAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyIsRunningOutput,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      guard AudioObjectHasProperty(id, &runAddress) else { continue }
+      var running: UInt32 = 0
+      var runSize = UInt32(MemoryLayout<UInt32>.size)
+      if AudioObjectGetPropertyData(id, &runAddress, 0, nil, &runSize, &running)
+        == noErr, running != 0
+      {
+        audible.append(pid)
+      }
+    }
+    return audible
   }
 
   private func endSync() {
     generation &+= 1
-    if shouldResumeNowPlaying || didPauseWithMediaKey {
-      MediaKey.playPause()
+    // Resume with exactly what paused. The key toggles, so it goes out only
+    // when it also did the pausing and nothing is playing now  -  a user
+    // who restarted their media by hand mid-take must not be paused again.
+    // MediaRemote play is a precise command and a no-op when already
+    // playing.
+    if didPauseWithMediaKey {
+      if !anyProcessPlayingOutput() {
+        MediaKey.playPause()
+      }
+    } else if shouldResumeNowPlaying {
+      MediaRemoteControl.play()
     }
     for app in appsToResume {
       resumeMediaApp(app)
@@ -189,55 +306,6 @@ final class MediaPauseService: @unchecked Sendable {
     didMuteOutput = false
     didDuckVolume = false
     mutedViaCoreAudio = false
-  }
-
-  private func pausePlayingMediaApps() -> [String] {
-    var paused: [String] = []
-    for app in Self.mediaApps where isRunning(bundleID: app.bundleID) {
-      let script = """
-        tell application "\(app.name)"
-          try
-            if player state is playing then
-              pause
-              return "paused"
-            end if
-          end try
-        end tell
-        return "idle"
-        """
-      if runOSASCRIPT(script)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        == "paused"
-      {
-        paused.append(app.name)
-      }
-    }
-    return paused
-  }
-
-  private func isRunning(bundleID: String) -> Bool {
-    NSWorkspace.shared.runningApplications.contains {
-      $0.bundleIdentifier == bundleID
-    }
-  }
-
-  private static let mediaApps: [(name: String, bundleID: String)] = [
-    ("Music", "com.apple.Music"),
-    ("Spotify", "com.spotify.client"),
-    ("TV", "com.apple.TV"),
-    ("QuickTime Player", "com.apple.QuickTimePlayerX"),
-  ]
-
-  private func resumeMediaApp(_ app: String) {
-    let bundleID = Self.mediaApps.first { $0.name == app }?.bundleID
-    if let bundleID, !isRunning(bundleID: bundleID) { return }
-    let script = """
-      tell application "\(app)"
-        try
-          play
-        end try
-      end tell
-      """
-    _ = runOSASCRIPT(script)
   }
 
   private func readOutputMuted() -> Bool? {
@@ -413,33 +481,21 @@ private enum MediaKey {
   }
 }
 
-/// Pause/play the system Now Playing session without linking MediaRemote.
+/// Send play/pause commands to the system Now Playing session without
+/// linking MediaRemote. Commands route fine on macOS 15.4+; reads of Now
+/// Playing state do not (redacted for third-party apps), which is why
+/// this enum deliberately exposes no way to read state  -  detection uses
+/// Core Audio output streams instead. Command 0 = play, 1 = pause.
 private enum MediaRemoteControl {
   private static let frameworkPath =
     "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
 
-  private typealias IsPlaying = @convention(c) (
-    DispatchQueue, @escaping (Bool) -> Void
-  ) -> Void
   private typealias SendCommand = @convention(c) (Int32, CFDictionary?) -> Void
-  private typealias Register = @convention(c) (DispatchQueue) -> Void
 
-  private static let callbackQueue = DispatchQueue(
-    label: "ca.hankyone.ListenToMe.mediaRemote.callback"
-  )
   private static let handle: UnsafeMutableRawPointer? = dlopen(
     frameworkPath,
     RTLD_NOW
   )
-  private static let isPlayingFn: IsPlaying? = {
-    guard let handle, let symbol = dlsym(
-      handle,
-      "MRMediaRemoteGetNowPlayingApplicationIsPlaying"
-    ) else {
-      return nil
-    }
-    return unsafeBitCast(symbol, to: IsPlaying.self)
-  }()
   private static let sendFn: SendCommand? = {
     guard let handle, let symbol = dlsym(handle, "MRMediaRemoteSendCommand")
     else {
@@ -447,42 +503,16 @@ private enum MediaRemoteControl {
     }
     return unsafeBitCast(symbol, to: SendCommand.self)
   }()
-  private static let didRegister: Bool = {
-    guard let handle, let symbol = dlsym(
-      handle,
-      "MRMediaRemoteRegisterForNowPlayingNotifications"
-    ) else {
-      return false
-    }
-    unsafeBitCast(symbol, to: Register.self)(callbackQueue)
-    return true
-  }()
 
   static func prepare() {
     _ = handle
-    _ = didRegister
   }
 
-  static func playback() -> NowPlayingPausePolicy.Playback {
-    _ = didRegister
-    guard let isPlayingFn else { return .unknown }
-    let box = Box()
-    let lock = DispatchSemaphore(value: 0)
-    isPlayingFn(callbackQueue) { playing in
-      box.value = playing ? .playing : .idle
-      lock.signal()
-    }
-    if lock.wait(timeout: .now() + 0.4) == .timedOut {
-      return .unknown
-    }
-    return box.value
+  static func play() {
+    sendFn?(0, nil)
   }
 
   static func pause() {
     sendFn?(1, nil)
-  }
-
-  private final class Box: @unchecked Sendable {
-    var value = NowPlayingPausePolicy.Playback.unknown
   }
 }

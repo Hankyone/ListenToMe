@@ -1,3 +1,7 @@
+## ListenToMe 0.3.75
+
+- Pause and resume your music or video around a take again. Playback detection now watches which apps are actually making sound instead of asking Now Playing, which no longer answers apps on recent macOS. You may see a one-time prompt to let ListenToMe control Music or Spotify.
+
 ## ListenToMe 0.3.74
 
 - Resume your music or video when you stop dictating. On the first take after launch it could stay paused forever.
