@@ -38,4 +38,27 @@ enum NowPlayingPausePolicy {
       mediaKeyAudibleBundlePrefixes.contains { bundle.hasPrefix($0) }
     }
   }
+
+  /// Call and meeting apps. Their audio must never be paused, muted
+  /// mid-call is already handled by the output mute, and the mic must
+  /// not be held for them.
+  private static let callBundlePrefixes = [
+    "us.zoom.xos",
+    "com.microsoft.teams",
+    "com.apple.FaceTime",
+    "com.webex.",
+    "com.skype.",
+    "com.hnc.Discord",
+    "com.tinyspeck.slackmacgap",
+  ]
+
+  /// True only when every audible process is a known call or meeting app.
+  /// An empty or unattributed set answers false: unknown sound gets the
+  /// full pause treatment.
+  static func isDefinitelyCallAudio(audibleBundles: Set<String>) -> Bool {
+    !audibleBundles.isEmpty
+      && audibleBundles.allSatisfy { bundle in
+        callBundlePrefixes.contains { bundle.hasPrefix($0) }
+      }
+  }
 }

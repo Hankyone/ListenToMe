@@ -32,11 +32,6 @@ final class MediaPauseService: @unchecked Sendable {
   private var shouldResumeNowPlaying = false
   private var didPauseWithMediaKey = false
   private var appsToResume: [String] = []
-  /// Players that refused Apple Events consent; skip them without asking
-  /// again. A first attempt may show a one-time consent prompt.
-  private var scriptableDenied: Set<String> = []
-  /// Bumped on each begin/end so a late begin can't clobber a finished take.
-  private var generation: UInt64 = 0
 
   init() {
     queue.async {
@@ -44,9 +39,11 @@ final class MediaPauseService: @unchecked Sendable {
     }
   }
 
-  /// Mutes output and kicks off pausing in the background. Always returns
-  /// false: output is muted synchronously before the mic opens, so there
-  /// is nothing to wait for. The return value only feeds a latency trace.
+  /// Mutes output, then pauses whatever is making sound. Idle takes return
+  /// immediately so the mic opens at once; a take started over real
+  /// playback holds the mic (bounded) until output is quiet, so the last
+  /// word of a video never bleeds into the transcript. Returns true when
+  /// media was playing  -  it only feeds a latency trace.
   func arm() async -> Bool {
     await withCheckedContinuation { continuation in
       queue.async { [weak self] in
@@ -63,61 +60,63 @@ final class MediaPauseService: @unchecked Sendable {
 
   private func armSync() -> Bool {
     endSync()
-    generation &+= 1
-    let session = generation
-
-    muteFast()
-    let audibleBefore = anyProcessPlayingOutput()
     shouldResumeNowPlaying = false
     didPauseWithMediaKey = false
     appsToResume = []
-    queue.async { [weak self] in
-      guard let self, self.generation == session else { return }
-      self.pauseWhateverIsAudible(audibleBefore: audibleBefore)
-    }
-    return false
-  }
 
-  /// Pause whatever is actually making sound, recording exactly what
-  /// worked so `end()` can resume with the matching command.
-  private func pauseWhateverIsAudible(audibleBefore: Bool) {
-    guard audibleBefore else { return }
+    muteFast()
+
+    // Idle takes open the mic immediately; only real playback holds it.
+    guard anyProcessPlayingOutput() else { return false }
     // A notification ping is audible for a moment too; only chase sound
     // that persists.
     Thread.sleep(forTimeInterval: 0.12)
-    guard anyProcessPlayingOutput() else { return }
+    guard anyProcessPlayingOutput() else { return false }
+
+    // Call audio is not media: never pause it, never hold the mic for it.
+    if NowPlayingPausePolicy.isDefinitelyCallAudio(
+      audibleBundles: audibleProcessBundleIDs()
+    ) {
+      return false
+    }
 
     setOutputMuted(true)
 
     // Music and Spotify answer AppleScript, which targets the app exactly
     //  -  no routing ambiguity no matter who owns the Now Playing session.
     pauseAudibleScriptableApps()
-    // A just-paused player's stream lingers for a moment; give it time to
-    // drain before concluding anything is still playing.
-    if !appsToResume.isEmpty {
-      waitUntilOutputQuiet()
-    }
-    if !anyProcessPlayingOutput() { return }
 
-    // MediaRemote commands reach whoever owns the Now Playing session.
-    MediaRemoteControl.pause()
-    waitUntilOutputQuiet()
-    if !anyProcessPlayingOutput() {
-      shouldResumeNowPlaying = true
-      return
+    // Apps we just paused keep their stream alive while draining
+    // (Spotify: over a second), so they are still "audible". Exclude them
+    // before choosing the next mechanism, or the hardware key below could
+    // toggle a just-paused player straight back on.
+    var stillAudible = audibleProcessBundleIDs()
+    for app in Self.scriptablePlayers where appsToResume.contains(app.name) {
+      stillAudible.remove(app.bundleID)
+    }
+    if !stillAudible.isEmpty {
+      if NowPlayingPausePolicy.shouldSendMediaKey(audibleBundles: stillAudible) {
+        // Chromium ignores MediaRemote commands entirely; the hardware key
+        // reaches it. The key toggles blindly, so it must be the ONLY
+        // thing sent to these apps  -  a MediaRemote pause first would
+        // pause, and the key would then toggle the same player back on
+        // mid-take. Pause and resume pair by construction.
+        MediaKey.playPause()
+        didPauseWithMediaKey = true
+      } else {
+        // MediaRemote commands reach whoever owns the Now Playing session.
+        MediaRemoteControl.pause()
+        shouldResumeNowPlaying = true
+      }
     }
 
-    // MediaRemote was ignored (Chromium does this). The hardware play/pause
-    // key reaches those players, but it toggles blindly, so it is only sent
-    // when the remaining sound comes from a known media-capable app.
-    guard NowPlayingPausePolicy.shouldSendMediaKey(
-      audibleBundles: audibleProcessBundleIDs()
-    ) else { return }
-    MediaKey.playPause()
-    waitUntilOutputQuiet()
-    if !anyProcessPlayingOutput() {
-      didPauseWithMediaKey = true
+    // When the output device refuses to mute (some displays and docks),
+    // the only thing keeping the last video word out of the transcript is
+    // holding the mic until playback has actually stopped.
+    if !mutedViaCoreAudio && !didDuckVolume {
+      waitUntilOutputQuiet(timeout: 2.5)
     }
+    return true
   }
 
   private static let scriptablePlayers: [(name: String, bundleID: String)] = [
@@ -127,15 +126,12 @@ final class MediaPauseService: @unchecked Sendable {
 
   private func pauseAudibleScriptableApps() {
     let audible = audibleProcessBundleIDs()
-    for app in Self.scriptablePlayers {
-      guard audible.contains(app.bundleID),
-        !scriptableDenied.contains(app.bundleID)
-      else { continue }
-      // The process is audibly playing, so it has a player to pause.
+    for app in Self.scriptablePlayers where audible.contains(app.bundleID) {
+      // The process is audibly playing, so it has a player to pause. A
+      // first attempt may show a one-time Automation consent prompt; a
+      // refusal just fails the script fast and we try the next mechanism.
       if runOSASCRIPT("tell application \"\(app.name)\" to pause") != nil {
         appsToResume.append(app.name)
-      } else {
-        scriptableDenied.insert(app.bundleID)
       }
     }
   }
@@ -153,10 +149,9 @@ final class MediaPauseService: @unchecked Sendable {
 
   /// Waits for output to go quiet. Players keep their stream alive for
   /// over a second after pausing (Spotify lingers ~1.4s), so the window
-  /// has to be generous. This runs on the pause queue with the mic
-  /// already open  -  the wait costs the user nothing.
-  private func waitUntilOutputQuiet() {
-    let deadline = Date().addingTimeInterval(1.6)
+  /// has to be generous.
+  private func waitUntilOutputQuiet(timeout: TimeInterval = 1.6) {
+    let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
       if !anyProcessPlayingOutput() { return }
       Thread.sleep(forTimeInterval: 0.05)
@@ -255,17 +250,20 @@ final class MediaPauseService: @unchecked Sendable {
   }
 
   private func endSync() {
-    generation &+= 1
     // Resume with exactly what paused. The key toggles, so it goes out only
     // when it also did the pausing and nothing is playing now  -  a user
     // who restarted their media by hand mid-take must not be paused again.
     // MediaRemote play is a precise command and a no-op when already
     // playing.
+    // Resume only when output is quiet: if audio is playing again, the
+    // user restarted their media by hand mid-take and must not be paused
+    // again, and if our pause never landed there is nothing to resume.
+    let quiet = !anyProcessPlayingOutput()
     if didPauseWithMediaKey {
-      if !anyProcessPlayingOutput() {
+      if quiet {
         MediaKey.playPause()
       }
-    } else if shouldResumeNowPlaying {
+    } else if shouldResumeNowPlaying, quiet {
       MediaRemoteControl.play()
     }
     for app in appsToResume {
@@ -443,8 +441,18 @@ final class MediaPauseService: @unchecked Sendable {
     process.standardError = stderr
     do {
       try process.run()
-      process.waitUntilExit()
     } catch {
+      return nil
+    }
+    // A pending Automation consent prompt blocks osascript until the user
+    // answers. Never let that stall the take: give up and let the next
+    // mechanism try instead.
+    let deadline = Date().addingTimeInterval(1.5)
+    while process.isRunning, Date() < deadline {
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+    if process.isRunning {
+      process.terminate()
       return nil
     }
     guard process.terminationStatus == 0 else { return nil }
@@ -454,7 +462,8 @@ final class MediaPauseService: @unchecked Sendable {
 }
 
 /// Hardware play/pause key. Chromium listens to this and ignores MediaRemote
-/// play. It toggles, so callers must only send it when playback was active.
+/// play. It toggles, so callers must only send it when media was audibly
+/// playing and every other pause attempt failed.
 private enum MediaKey {
   private static let playPauseKey: UInt32 = 16
 

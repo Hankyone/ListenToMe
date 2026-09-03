@@ -1,3 +1,9 @@
+## ListenToMe 0.3.76
+
+- Media no longer starts playing again mid-take: a slow-to-pause video could look like a failed pause and get toggled back on. Browsers and web apps now get only the play/pause key, never a double command.
+- The last word of a video no longer leaks into your transcript. On displays that cannot be muted (like HDMI monitors), the mic now waits until playback has actually stopped.
+- Dictating during a Zoom, Meet, Teams, or FaceTime call no longer touches media playback.
+
 ## ListenToMe 0.3.75
 
 - Pause and resume your music or video around a take again. Playback detection now watches which apps are actually making sound instead of asking Now Playing, which no longer answers apps on recent macOS. You may see a one-time prompt to let ListenToMe control Music or Spotify.

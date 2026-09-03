@@ -49,4 +49,33 @@ final class NowPlayingPausePolicyTests: XCTestCase {
       NowPlayingPausePolicy.shouldSendMediaKey(audibleBundles: [])
     )
   }
+
+  func testCallAudioIsLeftAlone() {
+    XCTAssertTrue(
+      NowPlayingPausePolicy.isDefinitelyCallAudio(
+        audibleBundles: ["us.zoom.xos"]
+      )
+    )
+    XCTAssertTrue(
+      NowPlayingPausePolicy.isDefinitelyCallAudio(
+        audibleBundles: ["us.zoom.xos", "com.apple.FaceTime"]
+      )
+    )
+  }
+
+  func testMediaOrUnknownAudioIsNotCallAudio() {
+    XCTAssertFalse(
+      NowPlayingPausePolicy.isDefinitelyCallAudio(
+        audibleBundles: ["com.google.Chrome"]
+      )
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.isDefinitelyCallAudio(
+        audibleBundles: ["us.zoom.xos", "com.spotify.client"]
+      )
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.isDefinitelyCallAudio(audibleBundles: [])
+    )
+  }
 }
