@@ -1,3 +1,7 @@
+## ListenToMe 0.3.83
+
+- Fixes the 0.3.82 release packaging: the bundled playback helper is now signed with the release identity so Apple notarization accepts it. No behavior change.
+
 ## ListenToMe 0.3.82
 
 - Pause and resume now use true playback state on macOS 15.4 and later. The app bundles the open mediaremote-adapter helper, read through the system Perl like other dictation apps do, so it sees what is really playing instead of guessing. Pause fires only when media is playing, and resume fires only for the take that paused.

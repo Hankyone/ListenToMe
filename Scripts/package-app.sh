@@ -205,6 +205,18 @@ if [[ -n "$CODESIGN_IDENTITY" ]]; then
     resign_sparkle_framework \
         "$STAGING_DIR/Contents/Frameworks/Sparkle.framework" \
         "$CODESIGN_IDENTITY"
+    # Nested adapter binaries keep their local ad-hoc signature unless
+    # re-signed here, and Apple rejects the app at notarization. Sign them
+    # with the same identity before sealing the app bundle.
+    ADAPTER_DIR="$STAGING_DIR/Contents/Resources/MediaRemoteAdapter"
+    if [[ -d "$ADAPTER_DIR/MediaRemoteAdapter.framework" ]]; then
+        codesign -f -s "$CODESIGN_IDENTITY" -o runtime \
+            "$ADAPTER_DIR/MediaRemoteAdapter.framework"
+    fi
+    if [[ -f "$ADAPTER_DIR/MediaRemoteAdapterTestClient" ]]; then
+        codesign -f -s "$CODESIGN_IDENTITY" -o runtime \
+            "$ADAPTER_DIR/MediaRemoteAdapterTestClient"
+    fi
     codesign \
         --force \
         --options runtime \
