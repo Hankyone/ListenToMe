@@ -229,6 +229,30 @@ final class HotkeyTakePolicyTests: XCTestCase {
     )
   }
 
+  func testFirstStopWhileConnectingFinishesAfterStartup() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .connecting,
+        hasAudioSendTask: false,
+        isMicRecording: false,
+        alreadyRequestedStop: false
+      ),
+      .finishAfterConnect
+    )
+  }
+
+  func testSecondStopWhileConnectingAborts() {
+    XCTAssertEqual(
+      RecordingStopPolicy.decision(
+        phase: .connecting,
+        hasAudioSendTask: false,
+        isMicRecording: false,
+        alreadyRequestedStop: true
+      ),
+      .abort
+    )
+  }
+
   func testFirstStopWhileMicIsUpWaitsToFinishPipeline() {
     XCTAssertEqual(
       RecordingStopPolicy.decision(
