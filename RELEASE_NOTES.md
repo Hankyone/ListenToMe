@@ -1,3 +1,7 @@
+## ListenToMe 0.3.80
+
+- A paused video that does not register a Now Playing session (like Twitter in a browser) is no longer toggled back on when you press push-to-talk. When the app cannot confirm media is playing, it now leaves the key alone instead of toggling blindly.
+
 ## ListenToMe 0.3.79
 
 - Fixed a jam where the app kept recording and the push-to-talk key went dead: when transcription finished text while a take was ending, the microphone engine could be left running forever behind an already-delivered take. The mic is now stopped by whichever path finishes first.

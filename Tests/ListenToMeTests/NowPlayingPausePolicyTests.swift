@@ -169,8 +169,9 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: 0.0))
     XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: -0.5))
 
-    // Unreadable session: fall back to sending so pausing keeps working.
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: nil))
+    // No session (some players never register one): treat as not playing,
+    // so a paused video is never toggled back on.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendPauseToggle(playbackRate: nil))
   }
 
   func testResumeToggleIsSentOnlyWhenMediaIsStillPaused() {
@@ -182,7 +183,7 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 1.0))
     XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: 0.5))
 
-    // Unreadable session: fall back to sending so resuming keeps working.
-    XCTAssertTrue(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: nil))
+    // No session: cannot confirm still paused, so do not toggle.
+    XCTAssertFalse(NowPlayingPausePolicy.shouldSendResumeToggle(playbackRate: nil))
   }
 }
