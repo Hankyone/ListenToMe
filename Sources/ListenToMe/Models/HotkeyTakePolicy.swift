@@ -144,7 +144,12 @@ enum RecordingStopPolicy {
       return .markStopBeforeStart
     case .finishing:
       return .recoverFinishing
-    case .connecting, .recording:
+    case .connecting:
+      // A normal PTT release may arrive during the fixed media lead or while
+      // the warm microphone is being promoted. Let startup finish once, then
+      // stop the valid take. A second stop is an explicit abort escape hatch.
+      return alreadyRequestedStop ? .abort : .finishAfterConnect
+    case .recording:
       if hasAudioSendTask || (usesBatchTranscription && isMicRecording) {
         return .finishLive
       }
