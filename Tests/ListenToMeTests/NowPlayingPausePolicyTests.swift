@@ -144,4 +144,74 @@ final class NowPlayingPausePolicyTests: XCTestCase {
     // which is far better than starting something that was never playing.
     XCTAssertFalse(NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: nil))
   }
+
+  func testPausedTakeResumesUnlessAlreadyPlaying() {
+    // The take that paused resumes when media is still paused.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: true,
+        currentPlaying: false
+      )
+    )
+    // Unknown state resumes: the take knows it paused, and explicit play
+    // is idempotent, never a toggle-on.
+    XCTAssertTrue(
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: true,
+        currentPlaying: nil
+      )
+    )
+    // User restarted mid-take: leave their playback alone.
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: true,
+        currentPlaying: true
+      )
+    )
+    // A take that never paused never resumes, so paused media is never
+    // started.
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: false,
+        currentPlaying: false
+      )
+    )
+    XCTAssertFalse(
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: false,
+        currentPlaying: nil
+      )
+    )
+  }
+
+  func testAdapterGetOutputParsing() {
+    let playing = """
+      {"playing":true,"bundleIdentifier":"com.google.Chrome","playbackRate":1}
+      """.data(using: .utf8)!
+    XCTAssertEqual(
+      MediaRemoteAdapterClient.parseGetOutput(playing),
+      MediaRemoteNowPlaying(
+        isPlaying: true,
+        bundleIdentifier: "com.google.Chrome",
+        playbackRate: 1.0
+      )
+    )
+
+    let paused = """
+      {"playing":false,"bundleIdentifier":"com.spotify.client","playbackRate":0}
+      """.data(using: .utf8)!
+    XCTAssertEqual(
+      MediaRemoteAdapterClient.parseGetOutput(paused),
+      MediaRemoteNowPlaying(
+        isPlaying: false,
+        bundleIdentifier: "com.spotify.client",
+        playbackRate: 0.0
+      )
+    )
+
+    XCTAssertNil(
+      MediaRemoteAdapterClient.parseGetOutput(Data("null".utf8))
+    )
+    XCTAssertNil(MediaRemoteAdapterClient.parseGetOutput(Data()))
+  }
 }

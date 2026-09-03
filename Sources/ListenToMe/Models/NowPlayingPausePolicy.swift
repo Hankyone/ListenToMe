@@ -92,6 +92,18 @@ enum NowPlayingPausePolicy {
     return rate <= 0.01
   }
 
+  /// Resume rule for a take: only the take that paused may resume, and it
+  /// stands down when the session already reports playback (the user
+  /// restarted mid-take). Unknown state resumes, because the take knows it
+  /// paused: explicit play is idempotent, never a toggle-on.
+  static func shouldResumePausedTake(
+    didPause: Bool,
+    currentPlaying: Bool?
+  ) -> Bool {
+    guard didPause else { return false }
+    return currentPlaying != true
+  }
+
   static func isDefinitelyCallAudio(audibleBundles: Set<String>) -> Bool {
     !audibleBundles.isEmpty
       && audibleBundles.allSatisfy(isKnownCallBundle)

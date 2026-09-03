@@ -1,3 +1,8 @@
+## ListenToMe 0.3.82
+
+- Pause and resume now use true playback state on macOS 15.4 and later. The app bundles the open mediaremote-adapter helper, read through the system Perl like other dictation apps do, so it sees what is really playing instead of guessing. Pause fires only when media is playing, and resume fires only for the take that paused.
+- A paused video is never started by push-to-talk, including session-less browser video. Calls are still never touched.
+
 ## ListenToMe 0.3.81
 
 - Push-to-talk never starts paused media. The blind play/pause key is gone. Pause uses only the explicit pause command, which is a no-op on already-paused players, so a paused Twitter video stays dead when you press to talk.

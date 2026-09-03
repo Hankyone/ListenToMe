@@ -192,6 +192,15 @@ done
 iconutil -c icns "$ICONSET_DIR" \
     -o "$STAGING_DIR/Contents/Resources/AppIcon.icns"
 
+# MediaRemote adapter for reliable Now Playing reads on macOS 15.4+.
+# The framework is never linked; /usr/bin/perl loads it at runtime.
+# ditto preserves framework symlinks for a valid signature.
+if [[ -d "$PROJECT_DIR/Resources/MediaRemoteAdapter" ]]; then
+    rm -rf "$STAGING_DIR/Contents/Resources/MediaRemoteAdapter"
+    ditto "$PROJECT_DIR/Resources/MediaRemoteAdapter" \
+        "$STAGING_DIR/Contents/Resources/MediaRemoteAdapter"
+fi
+
 if [[ -n "$CODESIGN_IDENTITY" ]]; then
     resign_sparkle_framework \
         "$STAGING_DIR/Contents/Frameworks/Sparkle.framework" \

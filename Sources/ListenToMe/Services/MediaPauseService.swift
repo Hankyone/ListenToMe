@@ -6,16 +6,20 @@ import Foundation
 /// Pauses the media that was active when a take began, then resumes it when
 /// that exact take releases the microphone.
 ///
-/// Detection uses Core Audio process activity to spot audible apps. Control
-/// uses only explicit MediaRemote pause/play commands, never the hardware
-/// play/pause key: the key toggles blindly and started paused videos on
-/// press. Pause is sent whenever non-call audio is audible; resume is sent
-/// only when Now Playing confirms media is still paused. There is no global
-/// output mute, no AppleScript, and no wait-for-silence loop.
+/// Detection uses Core Audio process activity to spot audible apps and the
+/// vendored mediaremote-adapter (via /usr/bin/perl) for true Now Playing
+/// state on macOS 15.4+, where direct reads are redacted. Control uses only
+/// explicit pause/play commands, never the hardware toggle key. Pause goes
+/// out only when the session confirms media is playing; resume goes out
+/// only for the take that paused. There is no global output mute, no
+/// AppleScript, and no wait-for-silence loop.
 final class MediaPauseService: @unchecked Sendable {
   private struct ActiveSession {
     let id: Int
     let plan: MediaPausePlan
+    /// True only when this take actually paused playing media. Resume fires
+    /// solely on this flag, so already-paused media is never started.
+    let didPause: Bool
   }
 
   private let queue = DispatchQueue(
@@ -27,6 +31,7 @@ final class MediaPauseService: @unchecked Sendable {
   init() {
     queue.async {
       MediaRemoteControl.prepare()
+      MediaRemoteAdapterClient.prewarm()
     }
   }
 
@@ -67,36 +72,50 @@ final class MediaPauseService: @unchecked Sendable {
       return false
     }
 
-    // A stale session from an aborted take would toggle its pause back on
-    // here, and the new take would toggle it again. When both takes drive
-    // the same route, the new take simply adopts the existing pause; the
-    // same number of key presses still pair up by take end.
-    var adoptedPlan: MediaPausePlan?
+    // A stale session from an aborted take already paused this route. The
+    // new take adopts the existing pause, keeping its resume flag, so one
+    // pause still pairs with one resume at take end.
+    var adoptedSession: ActiveSession?
     if let activeSession {
       if activeSession.plan.route == plan.route {
-        adoptedPlan = activeSession.plan
+        adoptedSession = activeSession
       } else {
-        resume(activeSession.plan)
+        resume(activeSession)
       }
       self.activeSession = nil
     }
 
-    if let adoptedPlan {
-      activeSession = ActiveSession(id: sessionID, plan: adoptedPlan)
+    if let adoptedSession {
+      activeSession = ActiveSession(
+        id: sessionID,
+        plan: adoptedSession.plan,
+        didPause: adoptedSession.didPause
+      )
       Thread.sleep(
         forTimeInterval: NowPlayingPausePolicy.captureLeadAfterPause
       )
       return true
     }
 
-    // Explicit pause is safe even when the state is uncertain: pausing an
-    // already-paused player is a no-op, never a toggle-on. The Now Playing
-    // rate is not consulted here because reads are redacted on recent macOS
-    // and session-less players (Twitter in a browser) report nil even while
-    // playing. If the player has a session, this pauses it. If it has none,
-    // this does nothing, which is still safe.
+    // The adapter reports true state even on macOS 15.4+, where direct
+    // reads are redacted. Pause only when the session confirms playback;
+    // an already-paused or session-less player is left untouched, so a
+    // paused Twitter video can never be started by push-to-talk.
+    if let session = MediaRemoteAdapterClient.currentSession() {
+      guard session.isPlaying else { return false }
+      guard pausePlayback() else { return false }
+      activeSession = ActiveSession(id: sessionID, plan: plan, didPause: true)
+      Thread.sleep(
+        forTimeInterval: NowPlayingPausePolicy.captureLeadAfterPause
+      )
+      return true
+    }
+
+    // No readable session (session-less players report nothing). Fall back
+    // to one explicit pause, which is a no-op on already-paused players,
+    // but never resume: without a session we cannot confirm we paused.
     guard MediaRemoteControl.pause() else { return false }
-    activeSession = ActiveSession(id: sessionID, plan: plan)
+    activeSession = ActiveSession(id: sessionID, plan: plan, didPause: false)
 
     Thread.sleep(
       forTimeInterval: NowPlayingPausePolicy.captureLeadAfterPause
@@ -107,19 +126,35 @@ final class MediaPauseService: @unchecked Sendable {
   private func endSync(sessionID: Int) {
     guard let activeSession, activeSession.id == sessionID else { return }
     self.activeSession = nil
-    resume(activeSession.plan)
+    resume(activeSession)
   }
 
-  private func resume(_ plan: MediaPausePlan) {
-    guard targetApplicationIsStillRunning(plan.targetBundles) else { return }
-    // Resume only when Now Playing confirms media is still paused. Playing
-    // again means our pause never landed or the user restarted playback;
-    // nil means no readable session, so resuming might start something the
-    // user never had playing. When in doubt, leave it paused for the user
-    // to resume by hand.
-    let rate = PlaybackRateProbe.currentRate()
-    guard NowPlayingPausePolicy.shouldResumeAfterPause(playbackRate: rate)
+  private func resume(_ session: ActiveSession) {
+    // Only the take that paused may resume. Anything else leaves playback
+    // exactly as found, so paused media is never started.
+    guard targetApplicationIsStillRunning(session.plan.targetBundles) else {
+      return
+    }
+    let currentPlaying = MediaRemoteAdapterClient.currentSession()?.isPlaying
+    guard
+      NowPlayingPausePolicy.shouldResumePausedTake(
+        didPause: session.didPause,
+        currentPlaying: currentPlaying
+      )
     else { return }
+    playPlayback()
+  }
+
+  /// Explicit pause via the adapter, falling back to the direct command.
+  /// Returns true when a pause command was accepted.
+  private func pausePlayback() -> Bool {
+    if MediaRemoteAdapterClient.send(1) { return true }
+    return MediaRemoteControl.pause()
+  }
+
+  /// Explicit resume via the adapter, falling back to the direct command.
+  private func playPlayback() {
+    if MediaRemoteAdapterClient.send(0) { return }
     _ = MediaRemoteControl.play()
   }
 
